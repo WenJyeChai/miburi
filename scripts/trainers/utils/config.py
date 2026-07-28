@@ -313,6 +313,17 @@ def parse_args():
 
     parser.add("--num_temp_classifiers", default=2, type=int)
 
+    # Opt-in three-q0/global-C2F gesture LM. These arguments are ignored by
+    # the released UpperFaceLowerGTDM3 trainer.
+    parser.add("--c2f_self_forcing", default=False, type=str2bool)
+    parser.add("--c2f_self_forcing_warmup_ratio", default=0.1, type=float)
+    parser.add("--c2f_self_forcing_ramp_ratio", default=0.3, type=float)
+    parser.add("--c2f_self_forcing_max_prob", default=0.5, type=float)
+    parser.add("--soft_recovery_weight", default=0.0, type=float)
+    parser.add("--soft_recovery_topk", default=8, type=int)
+    parser.add("--soft_recovery_sigma_scale", default=1.0, type=float)
+    parser.add("--soft_recovery_only_wrong_prefix", default=True, type=str2bool)
+
     parser.add("--param_dtype", default="float32", type=str)
     parser.add("--optim_dtype", default="float32", type=str)
 

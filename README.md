@@ -274,6 +274,24 @@ python scripts/train.py --config configs/gtdm3_audiotext_ufl_25_embody3dbeatx_al
 
 For multi-GPU, wrap any of these in the same `torchrun --standalone --nnodes=1 --nproc-per-node=N` line as above.
 
+#### Experimental three-q0 global-C2F Gesture LM
+
+The opt-in C2F variant is separate from the released GTDM3 model and config.
+It predicts upper/lower/face q0 tokens from three temporal heads, then predicts
+the remaining 17 tokens in an interleaved global coarse-to-fine order. It also
+supports scheduled detached self-forcing plus SentiAvatar-style soft recovery.
+
+```bash
+python scripts/train.py \
+    --config configs/gtdm3_c2f3q0_audiotext_ufl_25_beatx_allspk.yaml
+```
+
+The config initializes the Gesture LM from scratch (`is_continue: False`) but
+still loads the frozen pretrained gesture codecs and initializes its audio/text
+lookup embeddings from Moshi/Mimi. Its self-forcing schedule is expressed as a
+fraction of `epochs`; adjust the run horizon and ratios together when doing a
+shorter pilot.
+
 #### Weights & Biases logging
 
 W&B logging is optional and disabled by default. Install the tracking extra

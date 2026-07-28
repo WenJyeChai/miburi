@@ -16,6 +16,7 @@ _TRAINER_IMPORTS = (
     (".lowertranscausalcodec_trainer", "LowerBodyCausalCodecTrainer"),
     (".faceexpcausalcodec_trainer", "FaceExpCausalCodecTrainer"),
     (".uflgtdm3_trainer", "UpperFaceLowerGTDM3Trainer"),
+    (".uflgtdm3_c2f_trainer", "UpperFaceLowerGTDM3C2FTrainer"),
 )
 
 for _module_name, _cls_name in _TRAINER_IMPORTS:

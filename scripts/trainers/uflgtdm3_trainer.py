@@ -144,6 +144,29 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
         )
 
         return gesturelm
+
+    def get_model_forward_kwargs(self, epoch, iteration, target_codes=None):
+        """Extension point for opt-in model variants.
+
+        The released trainer returns no extra arguments, preserving its
+        original forward call exactly.
+        """
+        return {}
+
+    def get_additional_training_loss(
+        self,
+        logits,
+        gesture_tokens,
+        pad_loss_mask,
+        epoch,
+        iteration,
+    ):
+        """Extension point for variant-specific auxiliary losses."""
+        return None
+
+    def get_generation_class(self):
+        """Return the streaming generator paired with this trainer's model."""
+        return GestureLMGen
     
     def process_conditions(self, audio_codes, text_codes):
         """
@@ -582,6 +605,11 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 text_codes=text_codes, 
                 sum_condition=tar_spk,
                 ca_depth_padding_mask=lower_cross_attn_mask if self.args.drop_lower_crossattn else None,
+                **self.get_model_forward_kwargs(
+                    epoch,
+                    its,
+                    target_codes=gesture_tokens,
+                ),
             ) # B x K=16 x T=25 x cardinality
             if self.args.vad_guidance:
                 model_out, vad_logits = model_out
@@ -1004,6 +1032,16 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
 
             # -------------------------------------------- #
             
+            additional_loss = self.get_additional_training_loss(
+                logits,
+                gesture_tokens,
+                pad_loss_mask,
+                epoch,
+                its,
+            )
+            if additional_loss is not None:
+                g_loss_final += additional_loss
+
             g_loss_final.backward()
 
             # for name, param in self.model.named_parameters():
@@ -1308,7 +1346,7 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 # breakpoint()
                 gesture_spk_condition = torch.full((1, 1), tar_spk[0], device=self.local_rank, dtype=torch.long)
                 # breakpoint() # check the flowgen settings
-                glmgen = GestureLMGen(
+                glmgen = self.get_generation_class()(
                     self.model,
                     condition_tensors=gesture_spk_condition, 
                     cfg_coef=self.args.cfg_scale, #2.3,
