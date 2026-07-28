@@ -533,8 +533,7 @@ class FaceExpCausalCodecTrainer(BaseCausalCodecTrainer):
             if getattr(self.args, "mpjpe_eval_enabled", True):
                 self._mpjpe_log(epoch, split="val")
 
-            if self.global_rank == 0:
-                self.val_recording(epoch)
+            self.val_recording(epoch)
             
     def test(self, epoch, visualize=False, max_batches=None, save=False):
         results_save_path = os.path.join(self.checkpoint_path,  f"{epoch}/") 
@@ -784,5 +783,11 @@ class FaceExpCausalCodecTrainer(BaseCausalCodecTrainer):
                                                                
                 # if its == 1:break
         end_time = time.time() - start_time
-        recon_metrics.compute_metrics()
-        logger.info(f"total inference time: {int(end_time)} s for {int(total_length/self.args.motion_fps)} s motion")
+        metrics = recon_metrics.compute_metrics()
+        motion_seconds = total_length / self.args.motion_fps
+        metrics["inference_seconds"] = float(end_time)
+        metrics["motion_seconds"] = float(motion_seconds)
+        if motion_seconds > 0:
+            metrics["realtime_factor"] = float(end_time / motion_seconds)
+        logger.info(f"total inference time: {int(end_time)} s for {int(motion_seconds)} s motion")
+        return metrics

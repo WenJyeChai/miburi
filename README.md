@@ -274,6 +274,47 @@ python scripts/train.py --config configs/gtdm3_audiotext_ufl_25_embody3dbeatx_al
 
 For multi-GPU, wrap any of these in the same `torchrun --standalone --nnodes=1 --nproc-per-node=N` line as above.
 
+#### Weights & Biases logging
+
+W&B logging is optional and disabled by default. Install the tracking extra
+and authenticate once:
+
+```bash
+pip install -e ".[tracking]"
+wandb login
+```
+
+Enable it on any codec or GTDM3 training command with `--wandb True`.
+Only global rank 0 creates a W&B run, including under DDP:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 OMP_NUM_THREADS=4 \
+torchrun --standalone --nnodes=1 --nproc-per-node=4 \
+    scripts/train.py \
+    --config configs/gtdm3_audiotext_ufl_25_beatx_small.yaml \
+    --ddp True --batch_size 4 --loader_workers 4 \
+    --wandb True --wandb_project miburi \
+    --wandb_group gtdm3-goodspk \
+    --wandb_tags gtdm3 beatx 4xa800
+```
+
+Training runs log the configured loss meters, learning rate, global step,
+epoch, data/train time, throughput, GPU reserved memory, global batch size,
+parameter counts, and checkpoint metadata. Validation meters are reduced
+across all DDP ranks before logging. Codec validation also logs MPJPE.
+TensorBoard logging remains enabled.
+
+Useful tracking options:
+
+- `--wandb_name <name>` — override the timestamped experiment name.
+- `--wandb_entity <team-or-user>` — select a W&B entity.
+- `--wandb_mode offline` — keep the run local for later `wandb sync`.
+- `--wandb_run_id <id> --wandb_resume allow` — continue an existing W&B run.
+
+Standalone `scripts/test.py` runs accept the same W&B options and log
+evaluation metrics such as FGD, MPJPE, facial errors, beat alignment,
+diversity, inference time, and real-time factor where applicable.
+
 ---
 
 ## Evaluation

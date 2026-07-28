@@ -15,7 +15,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from .utils.optim_factory import create_optimizer
 from .utils.scheduler_factory import create_scheduler
 from .utils.tools import save_checkpoints, load_checkpoints
-from .utils.distributed import get_rank, get_world_size
+from .utils.distributed import get_rank, get_world_size, sync_tracker_meters
 from . import dataloaders as dataset
 from miburi.models import loaders, GestureMimiCodec
 
@@ -394,8 +394,30 @@ class BaseGLMTrainer(object):
         pstr += f"ntime: {t_train*1000:04}\t"
         pstr += f"mem: {mem_cost*len(self.args.gpus):.2f} "
         logger.info(pstr)
+        wandb_logger = getattr(self, "wandb_logger", None)
+        if self.global_rank == 0 and wandb_logger is not None:
+            wandb_logger.log_train(
+                tracker=self.tracker,
+                epoch=epoch,
+                iteration=its,
+                global_step=epoch * self.train_length + its,
+                learning_rate=lr_g,
+                discriminator_learning_rate=lr_d,
+                data_time_seconds=t_data,
+                train_time_seconds=t_train,
+                memory_gb=mem_cost,
+                global_batch_size=self.args.batch_size * get_world_size(),
+            )
      
     def val_recording(self, epoch):
+        sync_tracker_meters(
+            self.tracker,
+            states=("train", "val"),
+            device=self.local_rank,
+        )
+        if self.global_rank != 0:
+            return
+
         pstr_curr = f"[GPU{self.global_rank}:{self.local_rank}] Curr info >>>>  "
         pstr_best = f"[GPU{self.global_rank}:{self.local_rank}] Best info >>>>  "
         for name, states in self.tracker.loss_meters.items():
@@ -403,7 +425,7 @@ class BaseGLMTrainer(object):
             if metric.count > 0:
                 pstr_curr += f"{name}: {metric.avg:.4f}     \t"
                 if epoch != 0:
-                    if self.global_rank == 0: self.writer.add_scalars(f"val/{name}", {name+"_val":metric.avg, name+"_train":states['train'].avg}, epoch*self.train_length)
+                    self.writer.add_scalars(f"val/{name}", {name+"_val":metric.avg, name+"_train":states['train'].avg}, epoch*self.train_length)
                     new_best_train, new_best_val = self.tracker.update_and_plot(name, epoch, self.checkpoint_path+f"{name}_{self.args.name+self.args.notes}.png")
                     # if new_best_val:
                         # save_checkpoints(os.path.join(self.checkpoint_path, f"{name}.bin"), self.model, opt=None, epoch=None, lrs=None)        
@@ -413,6 +435,9 @@ class BaseGLMTrainer(object):
                 pstr_best += f"{k}: {metric['value']:.3f}({metric['epoch']:03d})\t"
         logger.info(pstr_curr)
         logger.info(pstr_best)
+        wandb_logger = getattr(self, "wandb_logger", None)
+        if wandb_logger is not None:
+            wandb_logger.log_validation(tracker=self.tracker, epoch=epoch)
    
     def test_recording(self, dict_name, value, epoch):
         self.tracker.update_meter(dict_name, "test", value)

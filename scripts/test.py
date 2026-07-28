@@ -12,6 +12,7 @@ import torch
 import trainers
 from trainers.utils import config
 from trainers.utils import tools as other_tools
+from trainers.utils.wandb_logger import WandbLogger
 
 # logger = logging.getLogger()
 
@@ -29,14 +30,33 @@ def main_worker(rank, world_size, args):
     # return one intance of trainer
     
     trainer = getattr(trainers, args.trainer+"Trainer")(args)
+    trainer.wandb_logger = WandbLogger.from_trainer(
+        args,
+        trainer,
+        rank=rank,
+        world_size=world_size,
+        job_type="evaluation",
+    )
     logger.info("Testing ...")
     logger.info(f"Checkpoint: {args.test_ckpt}")
 
     # other_tools.load_checkpoints(trainer.model, args.test_ckpt, args.g_name)
 
-    ckpt_epoch = os.path.basename(args.test_ckpt).split("_")[1].replace(".safetensors", "")
-    trainer.test("test_" + ckpt_epoch, visualize=args.visualize, max_batches=args.max_batches, save=args.save)
-    logger.info("Testing done")
+    try:
+        ckpt_epoch = os.path.basename(args.test_ckpt).split("_")[1].replace(".safetensors", "")
+        metrics = trainer.test(
+            "test_" + ckpt_epoch,
+            visualize=args.visualize,
+            max_batches=args.max_batches,
+            save=args.save,
+        )
+        trainer.wandb_logger.log_evaluation(
+            metrics,
+            checkpoint=args.test_ckpt,
+        )
+        logger.info("Testing done")
+    finally:
+        trainer.wandb_logger.finish()
     
 
 if __name__ == "__main__":

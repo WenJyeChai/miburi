@@ -846,7 +846,7 @@ class GestureMetrics:
                 "(check earlier 'Error in metrics calculation for ...' logs). "
                 "Skipping metric report."
             )
-            return
+            return {}
 
         l2_avg = self.facial_l2_all / self.dataset_framelen
         lvel_avg = self.facial_lvel / self.dataset_framelen
@@ -871,6 +871,15 @@ class GestureMetrics:
 
         gt_l1div = self.gt_l1_calculator.avg()
         logger.info(f"GT L1div score: {gt_l1div}")
+        return {
+            "facial_l2": float(l2_avg),
+            "facial_lvel": float(lvel_avg),
+            "fgd": float(fgd),
+            "beat_alignment": float(align_avg),
+            "gt_beat_alignment": float(gt_align_avg),
+            "l1_diversity": float(l1div),
+            "gt_l1_diversity": float(gt_l1div),
+        }
         
 class MPJPE:
     def __init__(self):
@@ -1193,15 +1202,16 @@ class ReconMetrics:
         self.dataset_len += 1
 
     def compute_metrics(self):
-        
-
-
         latent_out_all = np.concatenate(self.pred_latents, axis=0)
         latent_ori_all = np.concatenate(self.gt_latents, axis=0)
         fgd = FIDCalculator.frechet_distance(latent_out_all, latent_ori_all)
         logger.info(f"fgd score: {fgd}")
         avg_mpjpe = self.rec_mpjpe.get_average_error()
         logger.info(f"Reconstruction MPJPE: {avg_mpjpe}")
+        metrics = {
+            "fgd": float(fgd),
+            "mpjpe": float(avg_mpjpe),
+        }
         # Facial vertex L2 + vertex velocity L2. Zero for upper/lower
         # codec runs (rec_exps == tar_exps); meaningful for the face codec.
         if self.dataset_framelen > 0:
@@ -1209,6 +1219,6 @@ class ReconMetrics:
             facial_lvel_avg = self.facial_lvel / self.dataset_framelen
             logger.info(f"Facial L2: {facial_l2_avg}")
             logger.info(f"Facial L-Vel: {facial_lvel_avg}")
-        
-
-        
+            metrics["facial_l2"] = float(facial_l2_avg)
+            metrics["facial_lvel"] = float(facial_lvel_avg)
+        return metrics

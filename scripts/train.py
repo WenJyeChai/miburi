@@ -11,6 +11,7 @@ import torch.distributed as dist
 import trainers
 from trainers.utils import config
 from trainers.utils import tools as other_tools
+from trainers.utils.wandb_logger import WandbLogger
 
 from trainers.utils.distributed import (
     BACKEND,
@@ -59,6 +60,13 @@ def main_worker(args):
     # return one intance of trainer
     logger.info(f"Rank {global_rank} trainer initializing...")
     trainer = getattr(trainers, args.trainer+"Trainer")(args)
+    trainer.wandb_logger = WandbLogger.from_trainer(
+        args,
+        trainer,
+        rank=global_rank,
+        world_size=world_size,
+        job_type="train",
+    )
     if args.is_continue:
         # logger.info("Continue training ...")
         # other_tools.load_checkpoints(trainer.model, args.continue_ckpt, after_distributed=True)
@@ -68,45 +76,66 @@ def main_worker(args):
         start_epoch = 0
         if global_rank == 0: logger.info("Training from scratch ...")
     start_time = time.time()
-    for epoch in range(start_epoch, args.epochs+1):
-        if args.ddp: 
-            trainer.val_loader.sampler.set_epoch(epoch)
-        
-        # trainer.val(epoch)
-        
-        epoch_time = time.time()-start_time
-        
-        if epoch != args.epochs:
-            if args.ddp: 
-                trainer.train_loader.sampler.set_epoch(epoch)
-            trainer.tracker.reset()
-            trainer.train(epoch)
-        if args.debug:
-            if global_rank == 0:
-                trainer.val(epoch)
-                other_tools.save_checkpoints(os.path.join(trainer.checkpoint_path, f"last_{epoch}"), trainer.model, opt=None, epoch=None, lrs=None, save_dtype=args.param_dtype)
-                other_tools.load_checkpoints(trainer.model, os.path.join(trainer.checkpoint_path, f"last_{epoch}.safetensors"), after_distributed=True)
-            # trainer.test(epoch)
-        
-        if (epoch) % args.test_period == 0:
-            if global_rank == 0:
-                # if epoch % (args.test_period * 2) == 0 and epoch != 0: dist.barrier()
-                logger.info(f"[GPU {global_rank}] Saving checkpoints:")   
-                other_tools.save_checkpoints(os.path.join(trainer.checkpoint_path, f"last_{epoch}"), trainer.model, opt=None, epoch=None, lrs=None, save_dtype=args.param_dtype)
-                # trainer.test(epoch)
-                args.test_ckpt = os.path.join(trainer.checkpoint_path, f"last_{epoch}.safetensors")
-                other_tools.update_args_file(args, rank=global_rank)
-        
-        if epoch % (args.test_period) == 0 and epoch != 0:
-            logger.info(f"GPU {global_rank} Validation:")
-            trainer.val(epoch)
+    try:
+        for epoch in range(start_epoch, args.epochs+1):
+            epoch_start_time = time.time()
+            if args.ddp:
+                trainer.val_loader.sampler.set_epoch(epoch)
 
-            # dist.barrier()
-        
-        if trainer.global_rank == 0:
-            logger.info(f"Time info >>>>  elapsed: {epoch_time/60:.2f} mins\t" + f"remain: {(args.epochs/(epoch+1e-7)-1)*epoch_time/60:.2f} mins")
-       
-    
+            if epoch != args.epochs:
+                if args.ddp:
+                    trainer.train_loader.sampler.set_epoch(epoch)
+                trainer.tracker.reset()
+                trainer.train(epoch)
+            if args.debug:
+                # Validation contains DDP collectives, so every rank must enter.
+                trainer.val(epoch)
+                if global_rank == 0:
+                    debug_checkpoint = os.path.join(trainer.checkpoint_path, f"last_{epoch}.safetensors")
+                    other_tools.save_checkpoints(os.path.join(trainer.checkpoint_path, f"last_{epoch}"), trainer.model, opt=None, epoch=None, lrs=None, save_dtype=args.param_dtype)
+                    other_tools.load_checkpoints(trainer.model, debug_checkpoint, after_distributed=True)
+                    trainer.wandb_logger.log_checkpoint(epoch=epoch, path=debug_checkpoint)
+                # trainer.test(epoch)
+
+            if epoch % args.test_period == 0:
+                if global_rank == 0:
+                    logger.info(f"[GPU {global_rank}] Saving checkpoints:")
+                    checkpoint_path = os.path.join(trainer.checkpoint_path, f"last_{epoch}.safetensors")
+                    other_tools.save_checkpoints(os.path.join(trainer.checkpoint_path, f"last_{epoch}"), trainer.model, opt=None, epoch=None, lrs=None, save_dtype=args.param_dtype)
+                    # trainer.test(epoch)
+                    args.test_ckpt = checkpoint_path
+                    other_tools.update_args_file(args, rank=global_rank)
+                    trainer.wandb_logger.log_checkpoint(epoch=epoch, path=checkpoint_path)
+
+            if epoch % args.test_period == 0 and epoch != 0 and not args.debug:
+                logger.info(f"GPU {global_rank} Validation:")
+                trainer.val(epoch)
+
+            epoch_seconds = time.time() - epoch_start_time
+            elapsed_seconds = time.time() - start_time
+            completed_epochs = max(1, epoch - start_epoch + 1)
+            remaining_epochs = max(0, args.epochs - epoch)
+            remaining_seconds = (
+                elapsed_seconds / completed_epochs * remaining_epochs
+            )
+            if trainer.global_rank == 0:
+                logger.info(
+                    f"Time info >>>>  elapsed: {elapsed_seconds/60:.2f} mins\t"
+                    f"remain: {remaining_seconds/60:.2f} mins"
+                )
+                trainer.wandb_logger.log_epoch(
+                    epoch=epoch,
+                    epoch_seconds=epoch_seconds,
+                    elapsed_seconds=elapsed_seconds,
+                    remaining_seconds=remaining_seconds,
+                )
+    finally:
+        trainer.wandb_logger.finish()
+        writer = getattr(trainer, "writer", None)
+        if writer is not None:
+            writer.close()
+        if dist.is_available() and dist.is_initialized():
+            dist.destroy_process_group()
 
 if __name__ == "__main__":
     

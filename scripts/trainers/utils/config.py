@@ -30,6 +30,19 @@ def parse_args():
     parser.add("--project_name", default="a2g_0", type=str) # local device id
     parser.add("--notes", default="", type=str)
     parser.add("--trainer", default="aebody", type=str)
+    # Optional experiment tracking. Only global rank 0 creates a W&B run.
+    parser.add("--wandb", default=False, type=str2bool)
+    parser.add("--wandb_project", default="miburi", type=str)
+    parser.add("--wandb_entity", default=None, type=str)
+    parser.add("--wandb_name", default=None, type=str)
+    parser.add("--wandb_group", default=None, type=str)
+    parser.add("--wandb_job_type", default="train", type=str)
+    parser.add("--wandb_tags", default=[], type=str, nargs="*")
+    parser.add("--wandb_mode", default="online", type=str,
+               choices=["online", "offline", "disabled"])
+    parser.add("--wandb_run_id", default=None, type=str)
+    parser.add("--wandb_resume", default="never", type=str,
+               choices=["never", "allow", "must", "auto"])
     # ------------- path and save name ---------------- #
     parser.add("--is_train", default=True, type=str2bool)
     parser.add("--debug", default=False, type=str2bool)

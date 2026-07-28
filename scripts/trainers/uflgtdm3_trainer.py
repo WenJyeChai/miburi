@@ -1229,9 +1229,8 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 if self.args.debug:
                     if its == 10: break
                 
-        if self.global_rank == 0:
-            self.val_recording(epoch)
-            # self.store_inputs_outputs(os.path.join(self.checkpoint_path, "visualizations/"))
+        self.val_recording(epoch)
+        # self.store_inputs_outputs(os.path.join(self.checkpoint_path, "visualizations/"))
             
             
     def test(self, epoch, visualize=False, max_batches=None, save=False):
@@ -1793,6 +1792,11 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                            
                 # if its == 2:break
         end_time = time.time() - start_time
-        self.gesture_metrics.compute_metrics()
-        logger.info(f"total inference time: {int(end_time)} s for {int(total_length/self.args.motion_fps)} s motion")
-    
+        metrics = self.gesture_metrics.compute_metrics()
+        motion_seconds = total_length / self.args.motion_fps
+        metrics["inference_seconds"] = float(end_time)
+        metrics["motion_seconds"] = float(motion_seconds)
+        if motion_seconds > 0:
+            metrics["realtime_factor"] = float(end_time / motion_seconds)
+        logger.info(f"total inference time: {int(end_time)} s for {int(motion_seconds)} s motion")
+        return metrics

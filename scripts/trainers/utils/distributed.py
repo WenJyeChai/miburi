@@ -86,5 +86,51 @@ def avg_aggregate(metric: Union[float, int]) -> Union[float, int]:
     return buffer[0].item() / get_world_size()
 
 
+def reduce_sum_count(
+    value_sum: Union[float, int],
+    value_count: Union[float, int],
+    *,
+    device: Union[int, torch.device, str, None] = None,
+) -> tuple[float, int]:
+    """Sum an accumulator and its count across all distributed ranks."""
+    if not is_distributed():
+        return float(value_sum), int(value_count)
+    if device is None:
+        device = torch.device("cuda", torch.cuda.current_device())
+    elif isinstance(device, int):
+        device = torch.device("cuda", device)
+    stats = torch.tensor(
+        [float(value_sum), float(value_count)],
+        dtype=torch.float64,
+        device=device,
+    )
+    dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+    return float(stats[0].item()), int(stats[1].item())
+
+
+def sync_tracker_meters(
+    tracker,
+    *,
+    states: tuple[str, ...] = ("train", "val"),
+    device: Union[int, torch.device, str, None] = None,
+) -> None:
+    """Make selected EpochTracker meters represent all DDP ranks.
+
+    Every rank executes collectives in the same metric/state order, including
+    meters whose local count is zero.
+    """
+    if not is_distributed():
+        return
+    for name in tracker.metric_names:
+        for state in states:
+            meter = tracker.loss_meters[name][state]
+            meter.sum, meter.count = reduce_sum_count(
+                meter.sum,
+                meter.count,
+                device=device,
+            )
+            meter.avg = meter.sum / meter.count if meter.count else 0.0
+
+
 def is_torchrun() -> bool:
     return "TORCHELASTIC_RESTART_COUNT" in os.environ
