@@ -234,9 +234,11 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
         pad_loss_mask,
         epoch,
         iteration,
+        **batch_context,
     ):
         """Record temporal-head diagnostics without changing the objective."""
 
+        del batch_context
         self._record_temporal_q0(
             "train",
             logits,
@@ -262,7 +264,9 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
         logits,
         gesture_tokens,
         pad_loss_mask,
+        **batch_context,
     ):
+        del batch_context
         self._record_temporal_q0(
             "val",
             logits,
@@ -1265,6 +1269,10 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 token_loss_mask,
                 epoch,
                 its,
+                input_codes=in_gesture_tokens,
+                audio_codes=audio_codes,
+                text_codes=text_codes,
+                sum_condition=tar_spk,
             )
             if additional_loss is not None:
                 g_loss_final += additional_loss
@@ -1521,6 +1529,12 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                     logits,
                     gesture_tokens,
                     token_loss_mask,
+                    input_codes=in_gesture_tokens,
+                    audio_codes=audio_codes,
+                    text_codes=text_codes,
+                    sum_condition=tar_spk,
+                    epoch=epoch,
+                    iteration=its,
                 )
 
                 if self.args.debug:

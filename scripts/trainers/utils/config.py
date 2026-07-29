@@ -88,6 +88,65 @@ def parse_args():
             "use substantially more attention memory. Default: 4."
         ),
     )
+    # Frozen full-future temporal teacher for forward-KL q0 regret training.
+    parser.add(
+        "--regret_teacher_ckpt",
+        default=None,
+        type=str,
+        help=(
+            "Full-gesture/full-audio-text teacher checkpoint used by "
+            "UpperFaceLowerGTDM3Regret. Only its temporal q0 path is kept."
+        ),
+    )
+    parser.add(
+        "--regret_future_horizon_frames",
+        default=10,
+        type=int,
+        help=(
+            "Motion-frame gap hidden from the regret teacher before future "
+            "gesture becomes visible. Ten frames at 25 FPS is 400 ms."
+        ),
+    )
+    parser.add(
+        "--regret_temperature",
+        default=1.0,
+        type=float,
+        help="Temperature for forward-KL q0 distillation.",
+    )
+    parser.add(
+        "--regret_weight",
+        default=1.0,
+        type=float,
+        help=(
+            "Final alpha for q0 regret. The trainer additionally divides "
+            "the KL by the 20 gesture codebooks."
+        ),
+    )
+    parser.add(
+        "--regret_initial_weight",
+        default=0.1,
+        type=float,
+        help="Regret alpha at the first active epoch.",
+    )
+    parser.add(
+        "--regret_ramp_epochs",
+        default=15,
+        type=int,
+        help=(
+            "Epochs over which regret alpha rises linearly from its initial "
+            "to final value."
+        ),
+    )
+    parser.add(
+        "--regret_start_epoch",
+        default=-1,
+        type=int,
+        help=(
+            "Absolute first epoch for regret. -1 starts immediately after "
+            "a continuation checkpoint, or at pretrain_warmup_epochs for "
+            "scratch training."
+        ),
+    )
     parser.add("--save", default=False, type=str2bool,
                help="When running scripts/test.py, also write per-sample "
                     "gt.npz / pred.npz / upper_tokens.npz (and the codec "

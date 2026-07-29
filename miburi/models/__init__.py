@@ -23,3 +23,8 @@ from .gesture_lm_future_gesture import (
     GTemporalDepthModel3FutureGesture,
     GTemporalDepthModel3FutureGestureFullCondition,
 )
+from .gesture_lm_regret import (
+    forward_q0_regret_kl,
+    is_temporal_q0_state_key,
+    retain_temporal_q0_only,
+)

@@ -209,7 +209,9 @@ class UpperFaceLowerGTDM3C2FTrainer(UpperFaceLowerGTDM3Trainer):
         pad_loss_mask,
         epoch,
         iteration,
+        **batch_context,
     ):
+        del batch_context
         del pad_loss_mask, epoch
         model = self.model.module if self.args.ddp else self.model
         if getattr(self, "_c2f_used_self_forcing", False):
