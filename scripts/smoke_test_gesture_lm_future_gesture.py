@@ -2,7 +2,7 @@
 
 import torch
 
-from miburi.models.gesture_lm import GTemporalDepthModel3
+from miburi.models.gesture_lm import GTemporalDepthModel3, GestureLMGen
 from miburi.models.gesture_lm_future_gesture import (
     GTemporalDepthModel3FutureGesture,
     GTemporalDepthModel3FutureGestureFullCondition,
@@ -298,6 +298,124 @@ def test_causal_condition_cannot_relay_future_audio_text():
     )
 
 
+def test_oracle_temporal_targets_match_full_forward():
+    torch.manual_seed(25)
+    teacher = _make_teacher().eval()
+    codes, audio, text, speaker = _batch()
+    target_times = torch.tensor([0, 1])
+    temporal_codes = _masked_inputs(
+        teacher,
+        codes,
+        target_times,
+        horizon_tokens=2,
+    )
+    causal_audio = truncate_condition_codes_after_targets(
+        audio,
+        target_times,
+        condition_steps_per_gesture=1,
+        null_token_id=-1,
+    )
+    causal_text = truncate_condition_codes_after_targets(
+        text,
+        target_times,
+        condition_steps_per_gesture=1,
+        null_token_id=-1,
+    )
+    selected_out, selected_logits = (
+        teacher.forward_oracle_temporal_targets(
+            temporal_codes,
+            causal_audio,
+            causal_text,
+            speaker,
+            target_times,
+        )
+    )
+    assert selected_out.shape == (2, 1, 16)
+    assert selected_logits.shape == (2, 1, 1, 17)
+
+    full_logits = teacher(
+        codes,
+        audio_codes=causal_audio,
+        text_codes=causal_text,
+        sum_condition=speaker,
+        temporal_input_codes=temporal_codes,
+    )
+    batch_indices = torch.arange(codes.shape[0])
+    torch.testing.assert_close(
+        selected_logits[:, 0, 0],
+        full_logits[batch_indices, 0, target_times],
+    )
+
+
+def test_oracle_kinematic_rollout_uses_predicted_prefixes():
+    torch.manual_seed(26)
+    teacher = _make_teacher().eval()
+    codes, audio, text, speaker = _batch()
+    codes = codes[:1].expand(2, -1, -1)
+    audio = audio[:1].expand(2, -1, -1)
+    text = text[:1].expand(2, -1, -1)
+    speaker = speaker[:1].expand(2)
+    target_times = torch.tensor([0, 1])
+    temporal_codes = _masked_inputs(
+        teacher,
+        codes,
+        target_times,
+        horizon_tokens=2,
+    )
+    causal_audio = truncate_condition_codes_after_targets(
+        audio,
+        target_times,
+        condition_steps_per_gesture=1,
+        null_token_id=-1,
+    )
+    causal_text = truncate_condition_codes_after_targets(
+        text,
+        target_times,
+        condition_steps_per_gesture=1,
+        null_token_id=-1,
+    )
+    temporal_out, q0_logits = (
+        teacher.forward_oracle_temporal_targets(
+            temporal_codes,
+            causal_audio,
+            causal_text,
+            speaker,
+            target_times,
+        )
+    )
+    q0_logits[..., teacher.pad_token_id] = float("-inf")
+    q0_tokens = q0_logits[:, 0, 0].argmax(dim=-1)
+
+    rollout = GestureLMGen(
+        teacher,
+        use_sampling=False,
+        cfg_coef=1.0,
+    )
+    current_audio = torch.stack(
+        [audio[index, :, target] for index, target in enumerate(target_times)]
+    ).unsqueeze(-1)
+    current_text = torch.stack(
+        [text[index, :, target] for index, target in enumerate(target_times)]
+    ).unsqueeze(-1)
+    depth_audio, depth_text = rollout.process_conditions(
+        current_audio,
+        current_text,
+    )
+    depth_tokens = rollout.depformer_step(
+        q0_tokens,
+        temporal_out,
+        depth_audio,
+        depth_text,
+        speaker[:, None],
+        torch.zeros(2, teacher.n_q - 1, 1, dtype=torch.bool),
+        None,
+        rollout.bp_dist,
+    )
+    assert depth_tokens.shape == (2, teacher.n_q - 1)
+    assert (depth_tokens >= 0).all()
+    assert (depth_tokens < teacher.card).all()
+
+
 def test_base_checkpoint_compatibility_and_backward():
     torch.manual_seed(24)
     base = GTemporalDepthModel3(**_model_kwargs())
@@ -334,9 +452,11 @@ if __name__ == "__main__":
     test_condition_truncation_is_per_sample_and_target_aligned()
     test_condition_variants_have_original_parameter_count_and_masks()
     test_causal_condition_cannot_relay_future_audio_text()
+    test_oracle_temporal_targets_match_full_forward()
+    test_oracle_kinematic_rollout_uses_predicted_prefixes()
     test_base_checkpoint_compatibility_and_backward()
     print(
         "Masked-frame future-gesture smoke tests passed "
         "(25-token past/400ms guard/target exclusion/condition isolation/"
-        "parameter count)."
+        "oracle target selection/parameter count)."
     )

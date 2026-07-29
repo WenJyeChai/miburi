@@ -78,6 +78,16 @@ def parse_args():
                     "scripts/test.py. Useful for spot-checking a new "
                     "visualization or rerunning metrics on a subset. "
                     "Default: process the whole test set.")
+    parser.add(
+        "--future_oracle_target_batch_size",
+        default=4,
+        type=int,
+        help=(
+            "Number of independently masked target times evaluated together "
+            "by the future-gesture oracle test. Higher values are faster but "
+            "use substantially more attention memory. Default: 4."
+        ),
+    )
     parser.add("--save", default=False, type=str2bool,
                help="When running scripts/test.py, also write per-sample "
                     "gt.npz / pred.npz / upper_tokens.npz (and the codec "

@@ -22,8 +22,10 @@ for the entire sample, preventing a future gesture position from relaying
 future condition information through a later transformer layer.
 
 ``GTemporalDepthModel3FutureGestureFullCondition`` instead exposes complete
-paired audio/text memories. Both are offline diagnostic teachers and cannot
-perform standalone autoregressive generation.
+paired audio/text memories. Both are offline diagnostic teachers: they cannot
+perform standalone autoregressive generation, but the trainer can perform an
+explicitly labeled oracle infill evaluation when ground-truth future gesture
+is supplied by an evaluation dataset.
 """
 
 import torch
@@ -164,6 +166,94 @@ class GTemporalDepthModel3FutureGesture(GTemporalDepthModel3):
         # available exactly as in the raw causal window.
         bos_padding = source_padding[:, :1]
         return torch.cat([bos_padding, source_padding], dim=1)
+
+    def forward_oracle_temporal_targets(
+        self,
+        temporal_input_codes: torch.Tensor,
+        audio_codes: torch.Tensor,
+        text_codes: torch.Tensor,
+        sum_condition: torch.Tensor,
+        target_times: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Evaluate only the selected masked temporal queries.
+
+        This is the temporal half of oracle future-gesture evaluation. The
+        caller is responsible for constructing a different physically masked
+        gesture sequence for every target and, for the causal-condition
+        teacher, removing audio/text after that target.
+
+        Returns:
+            ``transformer_out`` shaped ``[B, 1, D]`` and upper-q0 logits
+            shaped ``[B, 1, 1, card + 1]``. Keeping singleton time axes makes
+            the result directly compatible with the released kinematic
+            autoregressive rollout helpers.
+        """
+
+        if temporal_input_codes.dim() != 3:
+            raise ValueError(
+                "Expected temporal_input_codes [B,K,T], got "
+                f"{tuple(temporal_input_codes.shape)}."
+            )
+        batch, codebooks, steps = temporal_input_codes.shape
+        if codebooks != self.n_q:
+            raise ValueError(
+                f"Expected {self.n_q} gesture codebooks, got {codebooks}."
+            )
+        if target_times.shape != (batch,):
+            raise ValueError(
+                f"Expected target_times shape {(batch,)}, got "
+                f"{tuple(target_times.shape)}."
+            )
+        if ((target_times < 0) | (target_times >= steps)).any():
+            raise ValueError(
+                "Oracle target times must lie inside the gesture sequence."
+            )
+        if sum_condition.shape != (batch,):
+            raise ValueError(
+                f"Expected one speaker id per oracle target, got "
+                f"{tuple(sum_condition.shape)}."
+            )
+
+        initial = self._get_initial_token().expand(
+            batch,
+            codebooks,
+            -1,
+        )
+        temporal_sequence = torch.cat(
+            [initial, temporal_input_codes],
+            dim=-1,
+        )
+        key_padding_mask = self.build_temporal_key_padding_mask(
+            temporal_input_codes
+        )
+        audio_condition, text_condition = self.process_conditions(
+            audio_codes,
+            text_codes,
+        )
+        transformer_out, logits = self.forward_temporal(
+            temporal_sequence,
+            audio_condition=audio_condition.squeeze(1),
+            text_condition=text_condition.squeeze(1),
+            sum_condition=sum_condition[:, None].expand(
+                -1,
+                temporal_sequence.shape[-1],
+            ),
+            key_padding_mask=key_padding_mask,
+        )
+        batch_indices = torch.arange(
+            batch,
+            device=target_times.device,
+        )
+        selected_out = transformer_out[
+            batch_indices,
+            target_times,
+        ].unsqueeze(1)
+        selected_logits = logits[
+            batch_indices,
+            :,
+            target_times,
+        ].unsqueeze(2)
+        return selected_out, selected_logits
 
     def forward(self, *args, temporal_include_last_input=True, **kwargs):
         # Include [BOS, g0, ..., g(T-1)] as self-attention inputs. The base
