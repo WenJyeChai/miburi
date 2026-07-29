@@ -369,6 +369,7 @@ class GTemporalDepthModel3(StreamingContainer):
             text_codes: torch.Tensor,
             sum_condition: torch.Tensor | None = None,
             ca_depth_padding_mask: torch.Tensor | None = None,
+            temporal_target_codes: torch.Tensor | None = None,
             ) -> torch.Tensor:
         """
         """
@@ -397,6 +398,11 @@ class GTemporalDepthModel3(StreamingContainer):
             audio_condition=audio_condition,
             text_condition=text_condition,
             sum_condition=temporal_sum_condition,
+            temporal_target_codes=(
+                codes
+                if temporal_target_codes is None
+                else temporal_target_codes
+            ),
         )
         # print(temp_logits.shape)
         
@@ -448,6 +454,7 @@ class GTemporalDepthModel3(StreamingContainer):
             audio_condition: torch.Tensor,
             text_condition: torch.Tensor,
             sum_condition: torch.Tensor | None = None,
+            temporal_target_codes: torch.Tensor | None = None,
         ):
         """
         Args:
@@ -469,7 +476,7 @@ class GTemporalDepthModel3(StreamingContainer):
         if sum_condition is not None:
             sum_condition = self.spk_tempemb(sum_condition) # [B, T, D]
             input_ = input_ + sum_condition.to(input_)
-        
+
         # conditions for cross attention
         audio_emb = audio_condition.to(input_) # B x S=125 x dim
         text_emb = text_condition.to(input_) # B x S=125 x dim
@@ -481,6 +488,14 @@ class GTemporalDepthModel3(StreamingContainer):
             input_,
             memories=condition_tensors,
         )
+        # Privileged teacher context is fused only after all temporal mixing.
+        # This placement is essential for leak-free future-gesture teachers:
+        # a future summary attached to an earlier input position could
+        # otherwise relay the current target through causal self-attention.
+        transformer_out = self.augment_temporal_output(
+            transformer_out,
+            temporal_target_codes=temporal_target_codes,
+        )
         if self.out_norm:
             transformer_out = self.out_norm(transformer_out)
         assert isinstance(transformer_out, torch.Tensor)
@@ -489,6 +504,20 @@ class GTemporalDepthModel3(StreamingContainer):
         logits = self.temporal_classifier(transformer_out)
         logits = logits.unsqueeze(1) # [B, 1, T, card]
         return transformer_out, logits
+
+    def augment_temporal_output(
+        self,
+        temporal_output: torch.Tensor,
+        temporal_target_codes: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Pointwise post-temporal extension hook for privileged teachers.
+
+        ``temporal_target_codes`` contains the unshifted training targets.
+        Released MIBURI deliberately ignores it. Subclasses must enforce
+        target exclusion and must not add later cross-time mixing.
+        """
+
+        return temporal_output
 
 
     

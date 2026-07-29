@@ -19,3 +19,7 @@ from .gesture_lm_offline import (
     GestureLMOfflineGen,
     GTemporalDepthModel3Offline,
 )
+from .gesture_lm_future_gesture import (
+    GTemporalDepthModel3FutureGesture,
+    GTemporalDepthModel3FutureGestureFullCondition,
+)
