@@ -3,8 +3,12 @@
 import copy
 import gc
 import math
+import os
+import shutil
+import tempfile
 import time
 
+import numpy as np
 import torch
 from loguru import logger
 from tqdm import tqdm
@@ -22,6 +26,11 @@ from miburi.models.gesture_lm_future_gesture import (
 from miburi.utils.sampling import sample_token
 
 from .uflgtdm3_trainer import UpperFaceLowerGTDM3Trainer
+from .dataloaders.utils.visualize import (
+    mux_audio_into_video,
+    render_smplx_debug_video,
+    stitch_videos_hstack,
+)
 from .utils import rotation_conversions as rc
 from .utils import tools as other_tools
 
@@ -535,11 +544,6 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
         predicted and target metrics because no valid future anchor exists.
         """
 
-        if visualize or save:
-            raise ValueError(
-                "Future-gesture oracle evaluation currently supports metrics "
-                "only; use --visualize False --save False."
-            )
         if self.test_loader.batch_size != 1:
             raise ValueError(
                 "Future-gesture oracle evaluation requires --batch_size 1."
@@ -580,6 +584,12 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
             cfg_coef=cfg_coef,
             **generation_settings,
         )
+        results_save_path = os.path.join(
+            self.checkpoint_path,
+            f"oracle_{epoch}",
+        )
+        if visualize or save:
+            os.makedirs(results_save_path, exist_ok=True)
         start_time = time.time()
         total_motion_frames = 0
         total_q0_correct = 0
@@ -599,6 +609,13 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
                 break
 
             file_name = dict_data["file_id"]
+            sample_name = dict_data["filechunk_id"][0]
+            raw_audio_batch = dict_data.get("raw_audio")
+            raw_audio = (
+                raw_audio_batch[0]
+                if visualize and raw_audio_batch is not None
+                else None
+            )
             tar_pose_upper = dict_data["motion_upper"].to(self.local_rank)
             tar_pose_hands = dict_data["motion_hands"].to(self.local_rank)
             tar_pose_face = dict_data["motion_face"].to(self.local_rank)
@@ -974,26 +991,163 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
                 lower_joint_mask,
                 valid_motion_frames,
             )
+            rec_pose_full = (
+                rec_pose_upperhands
+                + rec_pose_face
+                + rec_pose_lower
+            )
+            tar_pose_full = (
+                tar_pose_upperhands
+                + tar_pose_face_valid
+                + tar_pose_lower_valid
+            )
+            beta = tar_beta[0, 0]
             self.gesture_metrics.update(
                 {
-                    "rec_pose": (
-                        rec_pose_upperhands
-                        + rec_pose_face
-                        + rec_pose_lower
-                    ),
+                    "rec_pose": rec_pose_full,
                     "rec_exps": rec_exps,
                     "rec_trans": rec_trans,
-                    "tar_pose": (
-                        tar_pose_upperhands
-                        + tar_pose_face_valid
-                        + tar_pose_lower_valid
-                    ),
+                    "tar_pose": tar_pose_full,
                     "tar_exps": tar_exps_valid,
-                    "tar_beta": tar_beta[0, 0],
+                    "tar_beta": beta,
                     "tar_trans": tar_trans_valid,
                     "file_id": file_name[0],
                 }
             )
+
+            if visualize or save:
+                sample_save_path = os.path.join(
+                    results_save_path,
+                    sample_name,
+                )
+                os.makedirs(sample_save_path, exist_ok=True)
+                rec_pose_np = rec_pose_full.detach().cpu().numpy().reshape(
+                    valid_motion_frames,
+                    len(self.test_data.smplx_joint_names),
+                    3,
+                )
+                tar_pose_np = tar_pose_full.detach().cpu().numpy().reshape(
+                    valid_motion_frames,
+                    len(self.test_data.smplx_joint_names),
+                    3,
+                )
+                rec_trans_np = rec_trans.detach().cpu().numpy()
+                tar_trans_np = tar_trans_valid.detach().cpu().numpy()
+                rec_exps_np = rec_exps.detach().cpu().numpy()
+                tar_exps_np = tar_exps_valid.detach().cpu().numpy()
+                beta_np = beta.detach().cpu().numpy()
+
+                if save:
+                    np.savez(
+                        os.path.join(sample_save_path, "gt.npz"),
+                        betas=beta_np,
+                        poses=tar_pose_np,
+                        expressions=tar_exps_np,
+                        trans=tar_trans_np,
+                        model="smplx",
+                        gender="NEUTRAL_2020",
+                        mocap_frame_rate=self.args.motion_fps,
+                    )
+                    np.savez(
+                        os.path.join(sample_save_path, "pred.npz"),
+                        betas=beta_np,
+                        poses=rec_pose_np,
+                        expressions=rec_exps_np,
+                        trans=rec_trans_np,
+                        model="smplx",
+                        gender="NEUTRAL_2020",
+                        mocap_frame_rate=self.args.motion_fps,
+                    )
+                    np.savez(
+                        os.path.join(
+                            sample_save_path,
+                            "oracle_tokens.npz",
+                        ),
+                        predicted=predicted_codes[0].detach().cpu().numpy(),
+                        target=target_codes[0].detach().cpu().numpy(),
+                        future_horizon_tokens=self.future_horizon_tokens,
+                        excluded_tail_motion_frames=(
+                            self.future_horizon_tokens
+                            * self.args.frame_chunk_size
+                        ),
+                    )
+
+                if visualize:
+                    import soundfile as sf
+
+                    logger.info(
+                        f"Rendering oracle comparison for {sample_name}"
+                    )
+                    final_path = os.path.join(
+                        sample_save_path,
+                        "oracle_gt_pred_compared_audio.mp4",
+                    )
+                    tar_trans_viz = (
+                        tar_trans_np - tar_trans_np[0:1]
+                    )
+                    rec_trans_viz = (
+                        rec_trans_np - rec_trans_np[0:1]
+                    )
+                    with tempfile.TemporaryDirectory(
+                        prefix="oracle_test_sbs_"
+                    ) as temp_dir:
+                        gt_path = os.path.join(temp_dir, "gt.mp4")
+                        pred_path = os.path.join(temp_dir, "pred.mp4")
+                        stitched_path = os.path.join(
+                            temp_dir,
+                            "stitched.mp4",
+                        )
+                        audio_path = os.path.join(temp_dir, "audio.wav")
+                        render_smplx_debug_video(
+                            smplx_model=self.smplx_model,
+                            poses=tar_pose_np.reshape(
+                                valid_motion_frames,
+                                -1,
+                            ),
+                            transl=tar_trans_viz,
+                            expressions=tar_exps_np,
+                            betas=beta_np,
+                            output_path=gt_path,
+                            fps=self.args.motion_fps,
+                            mesh_color=(180, 54, 54, 255),
+                        )
+                        render_smplx_debug_video(
+                            smplx_model=self.smplx_model,
+                            poses=rec_pose_np.reshape(
+                                valid_motion_frames,
+                                -1,
+                            ),
+                            transl=rec_trans_viz,
+                            expressions=rec_exps_np,
+                            betas=beta_np,
+                            output_path=pred_path,
+                            fps=self.args.motion_fps,
+                            mesh_color=(36, 73, 156, 255),
+                        )
+                        stitch_videos_hstack(
+                            [gt_path, pred_path],
+                            stitched_path,
+                        )
+                        if not os.path.exists(stitched_path):
+                            raise RuntimeError(
+                                "Oracle side-by-side rendering failed; "
+                                f"no output at {stitched_path}."
+                            )
+                        if raw_audio is None:
+                            raise RuntimeError(
+                                "Oracle visualization requested but the "
+                                "test loader did not return raw audio."
+                            )
+                        sf.write(
+                            audio_path,
+                            raw_audio,
+                            self.args.audio_fps,
+                        )
+                        shutil.move(stitched_path, final_path)
+                        mux_audio_into_video(final_path, audio_path)
+                    logger.info(
+                        f"Oracle visualization saved to {final_path}"
+                    )
             total_motion_frames += valid_motion_frames
             logger.info(
                 f"Oracle clip {file_name[0]}: predicted "
