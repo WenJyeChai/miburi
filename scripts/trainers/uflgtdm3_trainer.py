@@ -478,10 +478,27 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                     # assert self.args.memory_embnoise_prob == 0
                     # decreasing prob from 1 to self.args.memory_dropout_prob
                     # at self.args.pretrain_warmup_epochs* 2 epoch, it reaches its desired value
-                    drop_prob = max(
-                        self.args.memory_dropout_prob,
-                        1 - (its + (epoch - self.args.pretrain_warmup_epochs) * len(self.train_loader)) / (self.args.pretrain_warmup_epochs*len(self.train_loader))
-                    )
+                    if self.args.pretrain_warmup_epochs <= 0:
+                        # A pretrained-model fine-tune can intentionally skip
+                        # warm-up. In that case use the configured steady-state
+                        # dropout directly instead of dividing by zero.
+                        drop_prob = self.args.memory_dropout_prob
+                    else:
+                        drop_prob = max(
+                            self.args.memory_dropout_prob,
+                            1 - (
+                                its
+                                + (
+                                    epoch
+                                    - self.args.pretrain_warmup_epochs
+                                )
+                                * len(self.train_loader)
+                            )
+                            / (
+                                self.args.pretrain_warmup_epochs
+                                * len(self.train_loader)
+                            ),
+                        )
                     # drop_prob = self.args.memory_dropout_prob
                     # print("drop_prob", drop_prob)
                     # breakpoint() # check the cardinality and vocab size
@@ -566,7 +583,17 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 # breakpoint()
                 masked_lower_codes = lower_codes.clone()
                 masked_face_codes = face_codes.clone()
-                drop_prob = min((epoch/(self.args.pretrain_warmup_epochs * 4)) * self.args.lower_bodypart_dropprob, self.args.lower_bodypart_dropprob)
+                if self.args.pretrain_warmup_epochs <= 0:
+                    drop_prob = self.args.lower_bodypart_dropprob
+                else:
+                    drop_prob = min(
+                        (
+                            epoch
+                            / (self.args.pretrain_warmup_epochs * 4)
+                        )
+                        * self.args.lower_bodypart_dropprob,
+                        self.args.lower_bodypart_dropprob,
+                    )
                 if its == 0 and drop_prob < self.args.lower_bodypart_dropprob:
                     logger.info(f"Epoch {epoch}: Using lower body part drop prob {drop_prob:.4f}")
                 valid_indices = beatx_indices
@@ -1305,14 +1332,38 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
         self.model.eval()
         self.gesture_metrics.reset()
 
-        gesture_lm_config = {
-            "use_sampling": True,
-            "temp_gtemporal": 0.9,
-            "temp_gdepth": 0.9,
-            "top_p_gtemporal": 0.8,
-            "top_p_gdepth": 0.95,
-            "check": True,
-        }
+        eval_generation_mode = getattr(
+            self.args, "eval_generation_mode", "production"
+        )
+        if eval_generation_mode == "production":
+            gesture_lm_config = {
+                "use_sampling": True,
+                "temp_gtemporal": 0.9,
+                "temp_gdepth": 0.9,
+                "top_p_gtemporal": 0.8,
+                "top_p_gdepth": 0.95,
+                "check": True,
+            }
+            eval_cfg_coef = self.args.cfg_scale
+        elif eval_generation_mode == "greedy_cfg1":
+            gesture_lm_config = {
+                "use_sampling": False,
+                "temp_gtemporal": 0.9,
+                "temp_gdepth": 0.9,
+                "top_p_gtemporal": 0.8,
+                "top_p_gdepth": 0.95,
+                "check": True,
+            }
+            eval_cfg_coef = 1.0
+        else:
+            raise ValueError(
+                f"Unknown eval_generation_mode={eval_generation_mode!r}."
+            )
+        logger.info(
+            f"Evaluation generation mode: {eval_generation_mode}; "
+            f"sampling={gesture_lm_config['use_sampling']}, "
+            f"CFG={eval_cfg_coef}"
+        )
         # breakpoint()
 
         
@@ -1349,7 +1400,7 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 glmgen = self.get_generation_class()(
                     self.model,
                     condition_tensors=gesture_spk_condition, 
-                    cfg_coef=self.args.cfg_scale, #2.3,
+                    cfg_coef=eval_cfg_coef,
                     **gesture_lm_config
                 )
                 # breakpoint()

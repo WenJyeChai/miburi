@@ -278,8 +278,10 @@ For multi-GPU, wrap any of these in the same `torchrun --standalone --nnodes=1 -
 
 The opt-in C2F variant is separate from the released GTDM3 model and config.
 It predicts upper/lower/face q0 tokens from three temporal heads, then predicts
-the remaining 17 tokens in an interleaved global coarse-to-fine order. It also
-supports scheduled detached self-forcing plus SentiAvatar-style soft recovery.
+the remaining 17 tokens in an interleaved global coarse-to-fine order. Its
+temporal backbone sees only the previous frames' three q0 tokens; fine-token
+history stays inside the per-frame kinematic transformer. It supports paired
+detached temporal/kinematic self-forcing plus SentiAvatar-style soft recovery.
 
 ```bash
 python scripts/train.py \
@@ -289,8 +291,20 @@ python scripts/train.py \
 The config initializes the Gesture LM from scratch (`is_continue: False`) but
 still loads the frozen pretrained gesture codecs and initializes its audio/text
 lookup embeddings from Moshi/Mimi. Its self-forcing schedule is expressed as a
-fraction of `epochs`; adjust the run horizon and ratios together when doing a
-shorter pilot.
+fraction of `epochs` when `c2f_self_forcing_start_epoch` is negative. The
+experimental config instead uses an absolute epoch-100 start and a 50-epoch
+ramp so changing the total run horizon cannot silently move the curriculum.
+
+For deterministic rollout evaluation matching the detached greedy
+self-forcing policy, run `scripts/test.py` against a full-sequence evaluation
+HDF5 with `--eval_generation_mode greedy_cfg1`. The default
+`--eval_generation_mode production` retains temporal top-p 0.8, kinematic
+top-p 0.95, temperature 0.9, and `--cfg_scale`.
+
+True temporal rollout is sequential across all gesture frames, so self-forced
+training batches are expected to be materially slower than teacher-forced
+batches. W&B exposes overall and per-part `c2f_temporal_*_q0_acc` metrics for
+the active self-forced batches.
 
 #### Weights & Biases logging
 

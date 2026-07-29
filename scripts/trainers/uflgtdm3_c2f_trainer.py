@@ -1,8 +1,8 @@
 """Opt-in trainer for the three-q0 global-C2F gesture LM.
 
 The released ``UpperFaceLowerGTDM3Trainer`` remains the default. This subclass
-only replaces model construction, scheduled kinematic self-forcing, the
-soft-recovery auxiliary loss, and the matching streaming generator.
+only replaces model construction, scheduled temporal/kinematic self-forcing,
+the soft-recovery auxiliary loss, and the matching streaming generator.
 """
 
 import copy
@@ -22,6 +22,10 @@ class UpperFaceLowerGTDM3C2FTrainer(UpperFaceLowerGTDM3Trainer):
         metric_names = list(self.tracker.metric_names) + [
             "c2f_self_forcing_prob",
             "c2f_self_forcing_active",
+            "c2f_temporal_q0_acc",
+            "c2f_temporal_upper_q0_acc",
+            "c2f_temporal_lower_q0_acc",
+            "c2f_temporal_face_q0_acc",
             "soft_recovery_loss",
             "soft_recovery_weighted",
             "gumbel_tau",
@@ -31,7 +35,19 @@ class UpperFaceLowerGTDM3C2FTrainer(UpperFaceLowerGTDM3Trainer):
         metric_directions = [
             self.tracker.is_higher_better[name]
             for name in self.tracker.metric_names
-        ] + [False, False, False, False, False, False, False]
+        ] + [
+            False,
+            False,
+            True,
+            True,
+            True,
+            True,
+            False,
+            False,
+            False,
+            False,
+            False,
+        ]
         # The inherited tracker has not seen any batches yet, so replacing it
         # here preserves every legacy metric while exposing C2F diagnostics to
         # TensorBoard and the rank-zero W&B logger.
@@ -95,6 +111,23 @@ class UpperFaceLowerGTDM3C2FTrainer(UpperFaceLowerGTDM3Trainer):
         if not self.args.c2f_self_forcing:
             return 0.0
         fractional_epoch = epoch + iteration / max(1, self.train_length)
+        start_epoch = getattr(
+            self.args, "c2f_self_forcing_start_epoch", -1.0
+        )
+        if start_epoch >= 0:
+            ramp_epochs = getattr(
+                self.args, "c2f_self_forcing_ramp_epochs", -1.0
+            )
+            maximum = self.args.c2f_self_forcing_max_prob
+            if fractional_epoch < start_epoch:
+                return 0.0
+            if ramp_epochs <= 0:
+                return maximum
+            ramp_progress = (
+                fractional_epoch - start_epoch
+            ) / ramp_epochs
+            return maximum * min(1.0, max(0.0, ramp_progress))
+
         progress = fractional_epoch / max(1, self.args.epochs)
         warmup = self.args.c2f_self_forcing_warmup_ratio
         ramp = self.args.c2f_self_forcing_ramp_ratio
@@ -178,11 +211,36 @@ class UpperFaceLowerGTDM3C2FTrainer(UpperFaceLowerGTDM3Trainer):
         iteration,
     ):
         del pad_loss_mask, epoch
+        model = self.model.module if self.args.ddp else self.model
+        if getattr(self, "_c2f_used_self_forcing", False):
+            rollout = model.last_temporal_rollout_codes
+            if rollout is not None:
+                q0_target = gesture_tokens[:, model.coarse_slots]
+                valid = q0_target != model.pad_token_id
+                correct = rollout == q0_target
+                if valid.any():
+                    self.tracker.update_meter(
+                        "c2f_temporal_q0_acc",
+                        "train",
+                        correct[valid].float().mean().item(),
+                    )
+                part_names = ("upper", "lower", "face")
+                for part_index, part_name in enumerate(part_names):
+                    part_valid = valid[:, part_index]
+                    if part_valid.any():
+                        part_accuracy = correct[
+                            :, part_index
+                        ][part_valid].float().mean()
+                        self.tracker.update_meter(
+                            f"c2f_temporal_{part_name}_q0_acc",
+                            "train",
+                            part_accuracy.item(),
+                        )
+
         weight = self.args.soft_recovery_weight
         if weight <= 0 or not getattr(self, "_c2f_used_self_forcing", False):
             return None
 
-        model = self.model.module if self.args.ddp else self.model
         prefix_codes = model.last_kinematic_input_codes
         if prefix_codes is None:
             return None

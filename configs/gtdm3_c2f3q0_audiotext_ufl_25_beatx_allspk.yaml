@@ -66,11 +66,15 @@ vad_guidance: True
 vad_use_face_logits: False
 vad_loss_weight: 0.05
 
-# Canonical CE first; detached self-forced prefixes then ramp to p=0.5.
+# Canonical CE first; paired temporal/kinematic self-forcing starts at epoch
+# 100 and ramps to p=0.5 over the following 50 epochs. The ratio fields remain
+# as a fallback for configs that set start_epoch to a negative value.
 c2f_self_forcing: True
 c2f_self_forcing_warmup_ratio: 0.1
 c2f_self_forcing_ramp_ratio: 0.3
 c2f_self_forcing_max_prob: 0.5
+c2f_self_forcing_start_epoch: 100
+c2f_self_forcing_ramp_epochs: 50
 soft_recovery_weight: 0.1
 soft_recovery_topk: 8
 soft_recovery_sigma_scale: 1.0
@@ -80,8 +84,8 @@ textaudio_emb_freeze: False
 varying_frame_length: False
 align_first_frame_yaw: True
 
-# Kept equal to the released all-speaker recipe. The percentage-based C2F
-# schedule uses this run horizon, so shorten this deliberately for pilot runs.
+# Kept equal to the released all-speaker recipe. The absolute C2F schedule
+# above is independent of this run horizon.
 pretrain_warmup_epochs: 50
 epochs: 10000
 decay_epochs: 500

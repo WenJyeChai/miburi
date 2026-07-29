@@ -120,6 +120,14 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
         self.depformer_dim = depformer_dim
         self.depformer_multi_linear = depformer_multi_linear
 
+        # The inherited model owns one temporal embedding/projection per
+        # canonical slot. Fine slots are deliberately absent from this
+        # variant's temporal input, so keep those compatibility parameters out
+        # of the optimizer instead of carrying permanently unused gradients.
+        for slot in self.kinematic_slots:
+            self.temporal_gemb[slot].requires_grad_(False)
+            self.temporal_gproj[slot].requires_grad_(False)
+
         # Replace the legacy single temporal classifier with independent
         # upper/lower/face q0 heads. They still share the temporal hidden state.
         self.temporal_classifier = nn.ModuleList(
@@ -267,6 +275,8 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
         self.depformer_gemb = nn.ModuleList()
         self.depformer_gproj = nn.ModuleList()
 
+        self.last_temporal_rollout_codes: torch.Tensor | None = None
+        self.last_temporal_input_codes: torch.Tensor | None = None
         self.last_kinematic_input_codes: torch.Tensor | None = None
         self.last_used_self_forcing = False
         self._init_c2f_weights()
@@ -304,13 +314,18 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
         text_condition: torch.Tensor,
         sum_condition: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Run the shared temporal backbone and emit three parallel q0 logits."""
+        """Run the q0-only temporal backbone and emit three parallel q0 logits.
+
+        Fine RVQ tokens are intentionally excluded from temporal history.  The
+        temporal state models only upper/lower/face q0 dynamics; residual-token
+        history remains local to the kinematic factorisation.
+        """
         _, K, _ = sequence.shape
         if K != self.n_q:
             raise ValueError(f"Expected {self.n_q} codebooks, got {K}.")
 
         input_: torch.Tensor | None = None
-        for slot in range(self.n_q):
+        for slot in self.coarse_slots:
             slot_emb = self.temporal_gemb[slot](sequence[:, slot])
             slot_emb = self.temporal_gproj[slot](slot_emb)
             input_ = slot_emb if input_ is None else input_ + slot_emb
@@ -527,20 +542,120 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
         return self.depformer_classifier[step](depformer_out).unsqueeze(1)
 
     @torch.no_grad()
+    def _greedy_temporal_self_forced_coarse_codes(
+        self,
+        target_codes: torch.Tensor,
+        audio_condition: torch.Tensor,
+        text_condition: torch.Tensor,
+        temporal_speaker: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Roll out q0 and its per-frame hidden states for self-forcing."""
+        B, K, T = target_codes.shape
+        if K != self.n_q:
+            raise ValueError(f"Expected {self.n_q} target codebooks, got {K}.")
+        expected_memory_length = T * self.query2mem_scale
+        if audio_condition.shape[1] != expected_memory_length:
+            raise ValueError(
+                f"Expected {expected_memory_length} audio frames, got "
+                f"{audio_condition.shape[1]}."
+            )
+        if text_condition.shape[1] != expected_memory_length:
+            raise ValueError(
+                f"Expected {expected_memory_length} text frames, got "
+                f"{text_condition.shape[1]}."
+            )
+        if temporal_speaker is not None and temporal_speaker.shape != (B, T):
+            raise ValueError(
+                f"Expected temporal speaker shape {(B, T)}, got "
+                f"{tuple(temporal_speaker.shape)}."
+            )
+        if self.temporal_transformer.is_streaming:
+            raise RuntimeError(
+                "Temporal transformer is already in streaming mode."
+            )
+
+        generated = torch.full(
+            (B, len(self.coarse_slots), T),
+            self.pad_token_id,
+            dtype=torch.long,
+            device=target_codes.device,
+        )
+        previous_frame = torch.full(
+            (B, self.n_q, 1),
+            self.initial_token_id,
+            dtype=torch.long,
+            device=target_codes.device,
+        )
+        hidden_steps: list[torch.Tensor] = []
+
+        with self.temporal_transformer.streaming(B):
+            for time_index in range(T):
+                memory_start = time_index * self.query2mem_scale
+                memory_end = memory_start + self.query2mem_scale
+                speaker_step = (
+                    temporal_speaker[:, time_index : time_index + 1]
+                    if temporal_speaker is not None
+                    else None
+                )
+                transformer_step, logits = self.forward_temporal(
+                    previous_frame,
+                    audio_condition[:, memory_start:memory_end],
+                    text_condition[:, memory_start:memory_end],
+                    speaker_step,
+                )
+                hidden_steps.append(transformer_step)
+                # PAD is a training-only class and cannot be a generated q0.
+                next_coarse = logits[..., : self.card].argmax(dim=-1)
+                valid = (
+                    target_codes[
+                        :, self.coarse_slots, time_index : time_index + 1
+                    ]
+                    != self.pad_token_id
+                )
+                next_coarse = torch.where(
+                    valid,
+                    next_coarse,
+                    torch.full_like(next_coarse, self.pad_token_id),
+                )
+                generated[:, :, time_index : time_index + 1] = next_coarse
+
+                previous_frame = torch.full_like(
+                    previous_frame, self.initial_token_id
+                )
+                previous_frame[:, self.coarse_slots] = next_coarse
+        return generated, torch.cat(hidden_steps, dim=1)
+
+    @torch.no_grad()
     def _greedy_self_forced_codes(
         self,
         target_codes: torch.Tensor,
         transformer_out: torch.Tensor,
-        temporal_logits: torch.Tensor,
+        temporal_logits: torch.Tensor | None,
         audio_condition: torch.Tensor,
         text_condition: torch.Tensor,
         sum_condition: torch.Tensor | None,
         ca_query_padding_mask: torch.Tensor | None,
+        coarse_codes: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Roll out detached model prefixes for scheduled self-forcing."""
         B, _, T = target_codes.shape
         generated = torch.full_like(target_codes, self.pad_token_id)
-        coarse = temporal_logits.argmax(dim=-1)
+        if coarse_codes is None:
+            if temporal_logits is None:
+                raise ValueError(
+                    "temporal_logits are required when coarse_codes are absent."
+                )
+            # Match online generation: PAD is a training-only class and must
+            # never become a valid q0 prefix.
+            coarse = temporal_logits[..., : self.card].argmax(dim=-1)
+        else:
+            expected_shape = (B, len(self.coarse_slots), T)
+            if coarse_codes.shape != expected_shape:
+                raise ValueError(
+                    f"Expected coarse rollout shape {expected_shape}, got "
+                    f"{tuple(coarse_codes.shape)}."
+                )
+            coarse = coarse_codes
         for coarse_index, slot in enumerate(self.coarse_slots):
             valid = target_codes[:, slot] != self.pad_token_id
             generated[:, slot] = torch.where(
@@ -617,7 +732,13 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
         self_force_kinematic: bool = False,
         kinematic_target_codes: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        """Training forward with optional detached, self-forced depth prefixes."""
+        """Train with optional detached temporal and kinematic rollouts.
+
+        On a self-forced batch, q0 is first rolled out sequentially across
+        time. The differentiable temporal pass consumes that detached q0
+        history, and the kinematic rollout consumes the same current-frame q0
+        predictions before refining the 17 residual slots.
+        """
         B, K, T = codes.shape
         if K != self.n_q:
             raise ValueError(f"Expected {self.n_q} codebooks, got {K}.")
@@ -640,38 +761,83 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
         audio_condition = audio_condition.squeeze(1)
         text_condition = text_condition.squeeze(1)
 
-        transformer_out, temporal_logits = self.forward_temporal(
-            temporal_input,
-            audio_condition,
-            text_condition,
-            temporal_speaker,
+        rollout_targets = (
+            kinematic_target_codes
+            if kinematic_target_codes is not None
+            else codes
         )
+        if rollout_targets.shape != codes.shape:
+            raise ValueError(
+                "kinematic_target_codes must match the model input shape."
+            )
         depth_query_mask = (
             ca_depth_padding_mask[:, self.kinematic_slots]
             if ca_depth_padding_mask is not None
             else None
         )
 
+        temporal_rollout_codes = None
+        rollout_depth_input_codes = None
+        if self_force_kinematic:
+            # Generate detached prefixes under inference-time dropout behavior.
+            # The returned hidden states and q0 tokens come from the same
+            # sequential temporal calls, exactly as in online CFG=1 rollout.
+            temporal_was_training = self.temporal_transformer.training
+            depth_was_training = self.depth_transformer.training
+            self.temporal_transformer.eval()
+            self.depth_transformer.eval()
+            try:
+                (
+                    temporal_rollout_codes,
+                    rollout_transformer_out,
+                ) = self._greedy_temporal_self_forced_coarse_codes(
+                    rollout_targets,
+                    audio_condition,
+                    text_condition,
+                    temporal_speaker,
+                )
+                rollout_depth_input_codes = self._greedy_self_forced_codes(
+                    rollout_targets,
+                    rollout_transformer_out,
+                    temporal_logits=None,
+                    audio_condition=audio_condition,
+                    text_condition=text_condition,
+                    sum_condition=temporal_speaker,
+                    ca_query_padding_mask=depth_query_mask,
+                    coarse_codes=temporal_rollout_codes,
+                )
+            finally:
+                self.temporal_transformer.train(temporal_was_training)
+                self.depth_transformer.train(depth_was_training)
+
+            # The differentiable temporal pass now sees the model's own q0
+            # history. Position zero remains START; each later position gets
+            # the q0 prediction generated for the preceding frame.
+            if T > 1:
+                temporal_input[
+                    :, self.coarse_slots, 1:
+                ] = temporal_rollout_codes[:, :, :-1]
+            self.last_temporal_rollout_codes = (
+                temporal_rollout_codes.detach()
+            )
+            self.last_temporal_input_codes = temporal_input[
+                :, self.coarse_slots
+            ].detach()
+        else:
+            self.last_temporal_rollout_codes = None
+            self.last_temporal_input_codes = None
+
+        transformer_out, temporal_logits = self.forward_temporal(
+            temporal_input,
+            audio_condition,
+            text_condition,
+            temporal_speaker,
+        )
+
         self.last_used_self_forcing = bool(self_force_kinematic)
         if self_force_kinematic:
-            rollout_targets = (
-                kinematic_target_codes
-                if kinematic_target_codes is not None
-                else codes
-            )
-            if rollout_targets.shape != codes.shape:
-                raise ValueError(
-                    "kinematic_target_codes must match the model input shape."
-                )
-            depth_input_codes = self._greedy_self_forced_codes(
-                rollout_targets,
-                transformer_out,
-                temporal_logits,
-                audio_condition,
-                text_condition,
-                temporal_speaker,
-                depth_query_mask,
-            )
+            assert rollout_depth_input_codes is not None
+            depth_input_codes = rollout_depth_input_codes
             self.last_kinematic_input_codes = depth_input_codes.detach()
         else:
             depth_input_codes = codes

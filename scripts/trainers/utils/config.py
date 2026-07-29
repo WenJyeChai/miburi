@@ -319,10 +319,38 @@ def parse_args():
     parser.add("--c2f_self_forcing_warmup_ratio", default=0.1, type=float)
     parser.add("--c2f_self_forcing_ramp_ratio", default=0.3, type=float)
     parser.add("--c2f_self_forcing_max_prob", default=0.5, type=float)
+    parser.add(
+        "--c2f_self_forcing_start_epoch",
+        default=-1.0,
+        type=float,
+        help=(
+            "Absolute self-forcing start epoch. A negative value keeps the "
+            "legacy ratio-based schedule."
+        ),
+    )
+    parser.add(
+        "--c2f_self_forcing_ramp_epochs",
+        default=-1.0,
+        type=float,
+        help=(
+            "Absolute linear-ramp duration when start_epoch is non-negative."
+        ),
+    )
     parser.add("--soft_recovery_weight", default=0.0, type=float)
     parser.add("--soft_recovery_topk", default=8, type=int)
     parser.add("--soft_recovery_sigma_scale", default=1.0, type=float)
     parser.add("--soft_recovery_only_wrong_prefix", default=True, type=str2bool)
+    parser.add(
+        "--eval_generation_mode",
+        default="production",
+        choices=("production", "greedy_cfg1"),
+        type=str,
+        help=(
+            "Gesture-LM evaluation policy. 'production' keeps top-p sampling "
+            "and --cfg_scale; 'greedy_cfg1' matches detached greedy "
+            "self-forcing with CFG disabled."
+        ),
+    )
 
     parser.add("--param_dtype", default="float32", type=str)
     parser.add("--optim_dtype", default="float32", type=str)
