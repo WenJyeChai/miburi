@@ -278,10 +278,10 @@ For multi-GPU, wrap any of these in the same `torchrun --standalone --nnodes=1 -
 
 The opt-in C2F variant is separate from the released GTDM3 model and config.
 It predicts upper/lower/face q0 tokens from three temporal heads, then predicts
-the remaining 17 tokens in an interleaved global coarse-to-fine order. Its
-temporal backbone sees only the previous frames' three q0 tokens; fine-token
-history stays inside the per-frame kinematic transformer. It supports paired
-detached temporal/kinematic self-forcing plus SentiAvatar-style soft recovery.
+the remaining 17 tokens in an interleaved global coarse-to-fine order. Like
+original Miburi, its temporal backbone embeds the complete previous 20-token
+frame. It supports paired detached temporal/kinematic self-forcing plus
+SentiAvatar-style soft recovery.
 
 ```bash
 python scripts/train.py \

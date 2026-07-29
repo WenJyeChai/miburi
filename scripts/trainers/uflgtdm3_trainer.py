@@ -167,6 +167,23 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
     def get_generation_class(self):
         """Return the streaming generator paired with this trainer's model."""
         return GestureLMGen
+
+    def prepare_generation_model(self, generator, full_condition):
+        """Hook for generators that require the complete condition sequence.
+
+        The released streaming generator consumes one condition chunk in
+        ``step`` and therefore needs no preparation.
+        """
+        return None
+
+    def record_validation_diagnostics(
+        self,
+        logits,
+        gesture_tokens,
+        pad_loss_mask,
+    ):
+        """Hook for variant-specific validation metrics."""
+        return None
     
     def process_conditions(self, audio_codes, text_codes):
         """
@@ -1291,6 +1308,12 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 )
                 self.tracker.update_meter("perplexity", "val", perplexity)
 
+                self.record_validation_diagnostics(
+                    logits,
+                    gesture_tokens,
+                    pad_mask,
+                )
+
                 if self.args.debug:
                     if its == 10: break
                 
@@ -1509,6 +1532,10 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 text_codes = tar_text_tokens # B x K=1 x T=125
 
                 audio_text_codes = torch.cat((text_codes, audio_codes), dim=1) # B x K=9 x T=125
+                self.prepare_generation_model(
+                    glmgen,
+                    audio_text_codes,
+                )
 
 
                 in_tar_pose_upper = torch.cat((tar_pose_upper, tar_pose_hands), dim=-1)

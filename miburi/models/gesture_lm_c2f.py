@@ -120,14 +120,6 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
         self.depformer_dim = depformer_dim
         self.depformer_multi_linear = depformer_multi_linear
 
-        # The inherited model owns one temporal embedding/projection per
-        # canonical slot. Fine slots are deliberately absent from this
-        # variant's temporal input, so keep those compatibility parameters out
-        # of the optimizer instead of carrying permanently unused gradients.
-        for slot in self.kinematic_slots:
-            self.temporal_gemb[slot].requires_grad_(False)
-            self.temporal_gproj[slot].requires_grad_(False)
-
         # Replace the legacy single temporal classifier with independent
         # upper/lower/face q0 heads. They still share the temporal hidden state.
         self.temporal_classifier = nn.ModuleList(
@@ -314,18 +306,13 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
         text_condition: torch.Tensor,
         sum_condition: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Run the q0-only temporal backbone and emit three parallel q0 logits.
-
-        Fine RVQ tokens are intentionally excluded from temporal history.  The
-        temporal state models only upper/lower/face q0 dynamics; residual-token
-        history remains local to the kinematic factorisation.
-        """
+        """Embed the complete previous frame and emit three parallel q0 logits."""
         _, K, _ = sequence.shape
         if K != self.n_q:
             raise ValueError(f"Expected {self.n_q} codebooks, got {K}.")
 
         input_: torch.Tensor | None = None
-        for slot in self.coarse_slots:
+        for slot in range(self.n_q):
             slot_emb = self.temporal_gemb[slot](sequence[:, slot])
             slot_emb = self.temporal_gproj[slot](slot_emb)
             input_ = slot_emb if input_ is None else input_ + slot_emb
@@ -542,14 +529,21 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
         return self.depformer_classifier[step](depformer_out).unsqueeze(1)
 
     @torch.no_grad()
-    def _greedy_temporal_self_forced_coarse_codes(
+    def _greedy_framewise_self_forced_codes(
         self,
         target_codes: torch.Tensor,
         audio_condition: torch.Tensor,
         text_condition: torch.Tensor,
         temporal_speaker: torch.Tensor | None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Roll out q0 and its per-frame hidden states for self-forcing."""
+        ca_query_padding_mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Generate each complete frame before advancing temporal history.
+
+        This is the training-time equivalent of greedy CFG=1 streaming
+        inference: temporal q0 is sampled first, the 17 kinematic tokens are
+        then sampled for that frame, and all 20 generated tokens become the
+        temporal input for the following frame.
+        """
         B, K, T = target_codes.shape
         if K != self.n_q:
             raise ValueError(f"Expected {self.n_q} target codebooks, got {K}.")
@@ -569,13 +563,22 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
                 f"Expected temporal speaker shape {(B, T)}, got "
                 f"{tuple(temporal_speaker.shape)}."
             )
+        if ca_query_padding_mask is not None:
+            expected_mask_shape = (B, self.num_kinematic_steps, T)
+            if ca_query_padding_mask.shape != expected_mask_shape:
+                raise ValueError(
+                    f"Expected depth query mask {expected_mask_shape}, got "
+                    f"{tuple(ca_query_padding_mask.shape)}."
+                )
         if self.temporal_transformer.is_streaming:
             raise RuntimeError(
                 "Temporal transformer is already in streaming mode."
             )
+        if self.depth_transformer.is_streaming:
+            raise RuntimeError("Depth transformer is already in streaming mode.")
 
         generated = torch.full(
-            (B, len(self.coarse_slots), T),
+            (B, self.n_q, T),
             self.pad_token_id,
             dtype=torch.long,
             device=target_codes.device,
@@ -586,7 +589,6 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
             dtype=torch.long,
             device=target_codes.device,
         )
-        hidden_steps: list[torch.Tensor] = []
 
         with self.temporal_transformer.streaming(B):
             for time_index in range(T):
@@ -597,129 +599,77 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
                     if temporal_speaker is not None
                     else None
                 )
-                transformer_step, logits = self.forward_temporal(
+                transformer_step, temporal_logits = self.forward_temporal(
                     previous_frame,
                     audio_condition[:, memory_start:memory_end],
                     text_condition[:, memory_start:memory_end],
                     speaker_step,
                 )
-                hidden_steps.append(transformer_step)
                 # PAD is a training-only class and cannot be a generated q0.
-                next_coarse = logits[..., : self.card].argmax(dim=-1)
-                valid = (
+                next_coarse = temporal_logits[
+                    ..., : self.card
+                ].argmax(dim=-1)
+                coarse_valid = (
                     target_codes[
                         :, self.coarse_slots, time_index : time_index + 1
                     ]
                     != self.pad_token_id
                 )
                 next_coarse = torch.where(
-                    valid,
+                    coarse_valid,
                     next_coarse,
                     torch.full_like(next_coarse, self.pad_token_id),
                 )
-                generated[:, :, time_index : time_index + 1] = next_coarse
+                current_frame = torch.full(
+                    (B, self.n_q),
+                    self.pad_token_id,
+                    dtype=torch.long,
+                    device=target_codes.device,
+                )
+                current_frame[:, self.coarse_slots] = next_coarse[:, :, 0]
+                previous_depth = torch.full(
+                    (B, 1, 1),
+                    self.initial_token_id,
+                    dtype=torch.long,
+                    device=target_codes.device,
+                )
+                with self.depth_transformer.streaming(B):
+                    for step, slot in enumerate(self.kinematic_slots):
+                        step_mask = (
+                            ca_query_padding_mask[
+                                :, step : step + 1, time_index : time_index + 1
+                            ]
+                            if ca_query_padding_mask is not None
+                            else None
+                        )
+                        depth_logits = self.forward_depth(
+                            step,
+                            previous_depth,
+                            next_coarse,
+                            transformer_step,
+                            audio_condition[:, memory_start:memory_end],
+                            text_condition[:, memory_start:memory_end],
+                            sum_condition=speaker_step,
+                            ca_query_padding_mask=step_mask,
+                        )
+                        depth_logits[..., self.pad_token_id] = float("-inf")
+                        next_token = depth_logits.argmax(dim=-1)
+                        valid = (
+                            target_codes[
+                                :, slot : slot + 1, time_index : time_index + 1
+                            ]
+                            != self.pad_token_id
+                        )
+                        next_token = torch.where(
+                            valid,
+                            next_token,
+                            torch.full_like(next_token, self.pad_token_id),
+                        )
+                        current_frame[:, slot] = next_token[:, 0, 0]
+                        previous_depth = next_token
 
-                previous_frame = torch.full_like(
-                    previous_frame, self.initial_token_id
-                )
-                previous_frame[:, self.coarse_slots] = next_coarse
-        return generated, torch.cat(hidden_steps, dim=1)
-
-    @torch.no_grad()
-    def _greedy_self_forced_codes(
-        self,
-        target_codes: torch.Tensor,
-        transformer_out: torch.Tensor,
-        temporal_logits: torch.Tensor | None,
-        audio_condition: torch.Tensor,
-        text_condition: torch.Tensor,
-        sum_condition: torch.Tensor | None,
-        ca_query_padding_mask: torch.Tensor | None,
-        coarse_codes: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Roll out detached model prefixes for scheduled self-forcing."""
-        B, _, T = target_codes.shape
-        generated = torch.full_like(target_codes, self.pad_token_id)
-        if coarse_codes is None:
-            if temporal_logits is None:
-                raise ValueError(
-                    "temporal_logits are required when coarse_codes are absent."
-                )
-            # Match online generation: PAD is a training-only class and must
-            # never become a valid q0 prefix.
-            coarse = temporal_logits[..., : self.card].argmax(dim=-1)
-        else:
-            expected_shape = (B, len(self.coarse_slots), T)
-            if coarse_codes.shape != expected_shape:
-                raise ValueError(
-                    f"Expected coarse rollout shape {expected_shape}, got "
-                    f"{tuple(coarse_codes.shape)}."
-                )
-            coarse = coarse_codes
-        for coarse_index, slot in enumerate(self.coarse_slots):
-            valid = target_codes[:, slot] != self.pad_token_id
-            generated[:, slot] = torch.where(
-                valid,
-                coarse[:, coarse_index],
-                torch.full_like(coarse[:, coarse_index], self.pad_token_id),
-            )
-
-        flat_transformer = transformer_out.reshape(B * T, 1, self.dim)
-        flat_audio = audio_condition.reshape(
-            B, T, self.query2mem_scale, self.cond_dim
-        ).reshape(B * T, self.query2mem_scale, self.cond_dim)
-        flat_text = text_condition.reshape(
-            B, T, self.query2mem_scale, self.cond_dim
-        ).reshape(B * T, self.query2mem_scale, self.cond_dim)
-        flat_speaker = (
-            sum_condition.reshape(B * T, 1)
-            if sum_condition is not None
-            else None
-        )
-        flat_coarse = generated[:, self.coarse_slots].permute(0, 2, 1).reshape(
-            B * T, 3, 1
-        )
-        flat_query_mask = None
-        if ca_query_padding_mask is not None:
-            flat_query_mask = ca_query_padding_mask.permute(0, 2, 1).reshape(
-                B * T, self.num_kinematic_steps, 1
-            )
-
-        if self.depth_transformer.is_streaming:
-            raise RuntimeError("Depth transformer is already in streaming mode.")
-        previous = torch.full(
-            (B * T, 1, 1),
-            self.initial_token_id,
-            dtype=torch.long,
-            device=target_codes.device,
-        )
-        with self.depth_transformer.streaming(B * T):
-            for step, slot in enumerate(self.kinematic_slots):
-                step_mask = (
-                    flat_query_mask[:, step : step + 1]
-                    if flat_query_mask is not None
-                    else None
-                )
-                logits = self.forward_depth(
-                    step,
-                    previous,
-                    flat_coarse,
-                    flat_transformer,
-                    flat_audio,
-                    flat_text,
-                    sum_condition=flat_speaker,
-                    ca_query_padding_mask=step_mask,
-                )
-                logits[..., self.pad_token_id] = float("-inf")
-                next_token = logits.argmax(dim=-1).reshape(B, T)
-                valid = target_codes[:, slot] != self.pad_token_id
-                next_token = torch.where(
-                    valid,
-                    next_token,
-                    torch.full_like(next_token, self.pad_token_id),
-                )
-                generated[:, slot] = next_token
-                previous = next_token.reshape(B * T, 1, 1)
+                generated[:, :, time_index] = current_frame
+                previous_frame = current_frame.unsqueeze(-1)
         return generated
 
     def forward(
@@ -734,10 +684,10 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         """Train with optional detached temporal and kinematic rollouts.
 
-        On a self-forced batch, q0 is first rolled out sequentially across
-        time. The differentiable temporal pass consumes that detached q0
-        history, and the kinematic rollout consumes the same current-frame q0
-        predictions before refining the 17 residual slots.
+        On a self-forced batch, each complete 20-token frame is generated
+        sequentially. The differentiable temporal pass then consumes the
+        detached complete-frame history, while the kinematic pass consumes the
+        corresponding detached within-frame prefixes.
         """
         B, K, T = codes.shape
         if K != self.n_q:
@@ -776,53 +726,33 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
             else None
         )
 
-        temporal_rollout_codes = None
-        rollout_depth_input_codes = None
+        rollout_codes = None
         if self_force_kinematic:
             # Generate detached prefixes under inference-time dropout behavior.
-            # The returned hidden states and q0 tokens come from the same
-            # sequential temporal calls, exactly as in online CFG=1 rollout.
+            # Every complete generated frame feeds the next temporal step,
+            # exactly as in online greedy CFG=1 rollout.
             temporal_was_training = self.temporal_transformer.training
             depth_was_training = self.depth_transformer.training
             self.temporal_transformer.eval()
             self.depth_transformer.eval()
             try:
-                (
-                    temporal_rollout_codes,
-                    rollout_transformer_out,
-                ) = self._greedy_temporal_self_forced_coarse_codes(
+                rollout_codes = self._greedy_framewise_self_forced_codes(
                     rollout_targets,
                     audio_condition,
                     text_condition,
                     temporal_speaker,
-                )
-                rollout_depth_input_codes = self._greedy_self_forced_codes(
-                    rollout_targets,
-                    rollout_transformer_out,
-                    temporal_logits=None,
-                    audio_condition=audio_condition,
-                    text_condition=text_condition,
-                    sum_condition=temporal_speaker,
-                    ca_query_padding_mask=depth_query_mask,
-                    coarse_codes=temporal_rollout_codes,
+                    depth_query_mask,
                 )
             finally:
                 self.temporal_transformer.train(temporal_was_training)
                 self.depth_transformer.train(depth_was_training)
 
-            # The differentiable temporal pass now sees the model's own q0
-            # history. Position zero remains START; each later position gets
-            # the q0 prediction generated for the preceding frame.
+            # Position zero remains START. Every later temporal input contains
+            # all 20 tokens generated for the preceding frame.
             if T > 1:
-                temporal_input[
-                    :, self.coarse_slots, 1:
-                ] = temporal_rollout_codes[:, :, :-1]
-            self.last_temporal_rollout_codes = (
-                temporal_rollout_codes.detach()
-            )
-            self.last_temporal_input_codes = temporal_input[
-                :, self.coarse_slots
-            ].detach()
+                temporal_input[:, :, 1:] = rollout_codes[:, :, :-1]
+            self.last_temporal_rollout_codes = rollout_codes.detach()
+            self.last_temporal_input_codes = temporal_input.detach()
         else:
             self.last_temporal_rollout_codes = None
             self.last_temporal_input_codes = None
@@ -836,8 +766,8 @@ class GTemporalDepthModel3C2F(GTemporalDepthModel3):
 
         self.last_used_self_forcing = bool(self_force_kinematic)
         if self_force_kinematic:
-            assert rollout_depth_input_codes is not None
-            depth_input_codes = rollout_depth_input_codes
+            assert rollout_codes is not None
+            depth_input_codes = rollout_codes
             self.last_kinematic_input_codes = depth_input_codes.detach()
         else:
             depth_input_codes = codes

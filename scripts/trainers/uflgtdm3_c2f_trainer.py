@@ -216,8 +216,9 @@ class UpperFaceLowerGTDM3C2FTrainer(UpperFaceLowerGTDM3Trainer):
             rollout = model.last_temporal_rollout_codes
             if rollout is not None:
                 q0_target = gesture_tokens[:, model.coarse_slots]
+                rollout_q0 = rollout[:, model.coarse_slots]
                 valid = q0_target != model.pad_token_id
-                correct = rollout == q0_target
+                correct = rollout_q0 == q0_target
                 if valid.any():
                     self.tracker.update_meter(
                         "c2f_temporal_q0_acc",

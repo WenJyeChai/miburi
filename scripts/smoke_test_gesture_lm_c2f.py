@@ -106,8 +106,8 @@ def test_teacher_forced_and_self_forced_forward_keep_canonical_layout():
     assert model.temporal_transformer.training
     assert model.depth_transformer.training
     assert model.last_kinematic_input_codes.shape == codes.shape
-    assert model.last_temporal_rollout_codes.shape == (2, 3, 3)
-    assert model.last_temporal_input_codes.shape == (2, 3, 3)
+    assert model.last_temporal_rollout_codes.shape == codes.shape
+    assert model.last_temporal_input_codes.shape == codes.shape
     assert (
         model.last_temporal_input_codes[:, :, 0]
         == model.initial_token_id
@@ -117,7 +117,7 @@ def test_teacher_forced_and_self_forced_forward_keep_canonical_layout():
         model.last_temporal_rollout_codes[:, :, :-1],
     )
     assert torch.equal(
-        model.last_kinematic_input_codes[:, COARSE_SLOTS],
+        model.last_kinematic_input_codes,
         model.last_temporal_rollout_codes,
     )
     assert (
@@ -140,9 +140,13 @@ def test_teacher_forced_and_self_forced_forward_keep_canonical_layout():
     assert all(
         head.weight.grad is not None for head in model.depformer_classifier
     )
+    assert all(
+        model.temporal_gproj[slot].weight.grad is not None
+        for slot in KINEMATIC_SLOTS
+    )
 
 
-def test_temporal_backbone_ignores_fine_token_history():
+def test_temporal_backbone_uses_full_token_history():
     torch.manual_seed(8)
     model = _make_model().eval()
     codes, audio, text, speaker = _batch()
@@ -169,20 +173,20 @@ def test_temporal_backbone_ignores_fine_token_history():
         text_condition,
         temporal_speaker,
     )
-    assert torch.equal(hidden, alternate_hidden)
-    assert torch.equal(logits, alternate_logits)
+    assert not torch.equal(hidden, alternate_hidden)
+    assert not torch.equal(logits, alternate_logits)
     for slot in KINEMATIC_SLOTS:
-        assert not any(
+        assert all(
             parameter.requires_grad
             for parameter in model.temporal_gemb[slot].parameters()
         )
-        assert not any(
+        assert all(
             parameter.requires_grad
             for parameter in model.temporal_gproj[slot].parameters()
         )
 
 
-def test_self_forced_q0_never_uses_pad_class():
+def test_self_forced_rollout_never_generates_pad_for_valid_targets():
     torch.manual_seed(9)
     model = _make_model().eval()
     codes, audio, text, speaker = _batch()
@@ -192,21 +196,16 @@ def test_self_forced_q0_never_uses_pad_class():
     text_condition = text_condition.squeeze(1)
     temporal_speaker = speaker.unsqueeze(1).expand(-1, T)
 
-    # Make PAD the unambiguous winner of the unmasked temporal classifier.
-    # The self-forcing rollout must still select only real codec IDs.
-    temporal_logits = torch.zeros(B, 3, T, model.card + 1)
-    temporal_logits[..., model.pad_token_id] = 100.0
-    generated = model._greedy_self_forced_codes(
+    generated = model._greedy_framewise_self_forced_codes(
         codes,
-        transformer_out=torch.randn(B, T, model.dim),
-        temporal_logits=temporal_logits,
-        audio_condition=audio_condition,
-        text_condition=text_condition,
-        sum_condition=temporal_speaker,
+        audio_condition,
+        text_condition,
+        temporal_speaker,
         ca_query_padding_mask=None,
     )
-    valid_q0 = codes[:, COARSE_SLOTS] != model.pad_token_id
-    assert (generated[:, COARSE_SLOTS][valid_q0] < model.card).all()
+    valid = codes != model.pad_token_id
+    assert (generated[valid] < model.card).all()
+    assert (generated[~valid] == model.pad_token_id).all()
 
 
 def test_greedy_cfg1_generator_matches_training_rollout():
@@ -223,32 +222,12 @@ def test_greedy_cfg1_generator_matches_training_rollout():
     audio_condition = audio_condition.squeeze(1)
     text_condition = text_condition.squeeze(1)
     temporal_speaker = speaker.unsqueeze(1).expand(-1, T)
-    coarse, transformer_out = (
-        model._greedy_temporal_self_forced_coarse_codes(
-            codes,
-            audio_condition,
-            text_condition,
-            temporal_speaker,
-        )
-    )
-    temporal_input = torch.full_like(codes, model.initial_token_id)
-    if T > 1:
-        temporal_input[:, COARSE_SLOTS, 1:] = coarse[:, :, :-1]
-    _, temporal_logits = model.forward_temporal(
-        temporal_input,
-        audio_condition,
-        text_condition,
-        temporal_speaker,
-    )
-    training_rollout = model._greedy_self_forced_codes(
+    training_rollout = model._greedy_framewise_self_forced_codes(
         codes,
-        transformer_out,
-        temporal_logits,
         audio_condition,
         text_condition,
         temporal_speaker,
         ca_query_padding_mask=None,
-        coarse_codes=coarse,
     )
 
     generator = GestureLMC2FGen(
@@ -306,8 +285,8 @@ def test_streaming_generator_outputs_all_20_canonical_slots():
 if __name__ == "__main__":
     test_slot_schedule_is_complete_and_global_c2f()
     test_teacher_forced_and_self_forced_forward_keep_canonical_layout()
-    test_temporal_backbone_ignores_fine_token_history()
-    test_self_forced_q0_never_uses_pad_class()
+    test_temporal_backbone_uses_full_token_history()
+    test_self_forced_rollout_never_generates_pad_for_valid_targets()
     test_greedy_cfg1_generator_matches_training_rollout()
     test_streaming_generator_outputs_all_20_canonical_slots()
     print("C2F smoke tests passed (forward/backward/CFG streaming).")
