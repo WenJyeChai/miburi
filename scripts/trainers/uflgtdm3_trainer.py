@@ -42,9 +42,49 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
         
 
         self.tracker = other_tools.EpochTracker(
-            ["ce_loss", "ce_upper", "ce_lower", "ce_face", "perplexity", "cont_upper_loss", "cont_face_loss", "cont_lower_loss", "embody_upper_cont_loss", "embody_face_mmd_loss", "embody_lower_mmd_loss", "mse_upper_loss", "mse_face_loss", "mse_lower_loss", "mse_transl_loss", "embody_mse_upper_loss", "vad_loss"], 
-            [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
-            )
+            [
+                "ce_loss",
+                "ce_upper",
+                "ce_lower",
+                "ce_face",
+                "perplexity",
+                "cont_upper_loss",
+                "cont_face_loss",
+                "cont_lower_loss",
+                "embody_upper_cont_loss",
+                "embody_face_mmd_loss",
+                "embody_lower_mmd_loss",
+                "mse_upper_loss",
+                "mse_face_loss",
+                "mse_lower_loss",
+                "mse_transl_loss",
+                "embody_mse_upper_loss",
+                "vad_loss",
+                "temporal_q0_ce",
+                "temporal_q0_acc",
+            ],
+            [
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                True,
+            ],
+        )
 
         # self.ce_temporal = torch.nn.CrossEntropyLoss(reduction="none", ignore_index=self.model.initial_token_id)
         # self.ce_depth = torch.nn.CrossEntropyLoss(reduction="none", ignore_index=self.model.initial_token_id)
@@ -161,7 +201,14 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
         epoch,
         iteration,
     ):
-        """Extension point for variant-specific auxiliary losses."""
+        """Record temporal-head diagnostics without changing the objective."""
+
+        self._record_temporal_q0(
+            "train",
+            logits,
+            gesture_tokens,
+            pad_loss_mask,
+        )
         return None
 
     def get_generation_class(self):
@@ -182,8 +229,52 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
         gesture_tokens,
         pad_loss_mask,
     ):
-        """Hook for variant-specific validation metrics."""
-        return None
+        self._record_temporal_q0(
+            "val",
+            logits,
+            gesture_tokens,
+            pad_loss_mask,
+        )
+
+    def _record_temporal_q0(
+        self,
+        split,
+        logits,
+        gesture_tokens,
+        pad_loss_mask,
+    ):
+        """Track the one temporal q0 stream independently of depth tokens."""
+
+        q0_logits = logits[:, 0]
+        q0_targets = gesture_tokens[:, 0]
+        q0_valid = pad_loss_mask[:, 0].bool()
+        if not q0_valid.any():
+            return
+
+        token_losses = F.cross_entropy(
+            q0_logits.reshape(-1, q0_logits.shape[-1]),
+            q0_targets.reshape(-1),
+            reduction="none",
+        ).reshape_as(q0_targets)
+        q0_ce = token_losses[q0_valid].mean()
+        # PAD is a training-only class and cannot count as a correct
+        # temporal prediction.
+        q0_prediction = q0_logits[
+            ..., : self.modelout_ignore_index
+        ].argmax(dim=-1)
+        q0_accuracy = (
+            q0_prediction[q0_valid] == q0_targets[q0_valid]
+        ).float().mean()
+        self.tracker.update_meter(
+            "temporal_q0_ce",
+            split,
+            q0_ce.item(),
+        )
+        self.tracker.update_meter(
+            "temporal_q0_acc",
+            split,
+            q0_accuracy.item(),
+        )
     
     def process_conditions(self, audio_codes, text_codes):
         """

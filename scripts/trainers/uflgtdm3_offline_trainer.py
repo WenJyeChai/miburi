@@ -7,7 +7,6 @@ does not enable C2F, self-forcing, soft recovery, or any additional loss.
 import copy
 
 import torch
-import torch.nn.functional as F
 from loguru import logger
 
 from miburi.models import (
@@ -17,26 +16,10 @@ from miburi.models import (
 )
 
 from .uflgtdm3_trainer import UpperFaceLowerGTDM3Trainer
-from .utils import tools as other_tools
 
 
 class UpperFaceLowerGTDM3OfflineTrainer(UpperFaceLowerGTDM3Trainer):
     """Original one-q0/19-depth architecture with full temporal memory."""
-
-    def __init__(self, args):
-        super().__init__(args)
-        metric_names = list(self.tracker.metric_names) + [
-            "temporal_q0_ce",
-            "temporal_q0_acc",
-        ]
-        metric_directions = [
-            self.tracker.is_higher_better[name]
-            for name in self.tracker.metric_names
-        ] + [False, True]
-        self.tracker = other_tools.EpochTracker(
-            metric_names,
-            metric_directions,
-        )
 
     def get_model(self, args):
         checkpoint_info = loaders.CheckpointInfo.from_hf_repo(
@@ -109,72 +92,4 @@ class UpperFaceLowerGTDM3OfflineTrainer(UpperFaceLowerGTDM3Trainer):
         logger.info(
             "Installed full-sequence audio/text memory for offline temporal "
             f"generation ({full_condition.shape[-1]} condition tokens)."
-        )
-
-    def _record_temporal_q0(
-        self,
-        split,
-        logits,
-        gesture_tokens,
-        pad_loss_mask,
-    ):
-        q0_logits = logits[:, 0]
-        q0_targets = gesture_tokens[:, 0]
-        q0_valid = pad_loss_mask[:, 0].bool()
-        if not q0_valid.any():
-            return
-
-        token_losses = F.cross_entropy(
-            q0_logits.reshape(-1, q0_logits.shape[-1]),
-            q0_targets.reshape(-1),
-            reduction="none",
-        ).reshape_as(q0_targets)
-        q0_ce = token_losses[q0_valid].mean()
-        # PAD is a training-only class and must not receive credit as a
-        # generated temporal token.
-        q0_prediction = q0_logits[..., : self.modelout_ignore_index].argmax(
-            dim=-1
-        )
-        q0_accuracy = (
-            q0_prediction[q0_valid] == q0_targets[q0_valid]
-        ).float().mean()
-        self.tracker.update_meter(
-            "temporal_q0_ce",
-            split,
-            q0_ce.item(),
-        )
-        self.tracker.update_meter(
-            "temporal_q0_acc",
-            split,
-            q0_accuracy.item(),
-        )
-
-    def get_additional_training_loss(
-        self,
-        logits,
-        gesture_tokens,
-        pad_loss_mask,
-        epoch,
-        iteration,
-    ):
-        self._record_temporal_q0(
-            "train",
-            logits,
-            gesture_tokens,
-            pad_loss_mask,
-        )
-        # Diagnostics only: preserve the original MIBURI objective exactly.
-        return None
-
-    def record_validation_diagnostics(
-        self,
-        logits,
-        gesture_tokens,
-        pad_loss_mask,
-    ):
-        self._record_temporal_q0(
-            "val",
-            logits,
-            gesture_tokens,
-            pad_loss_mask,
         )
