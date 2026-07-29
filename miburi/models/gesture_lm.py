@@ -369,7 +369,9 @@ class GTemporalDepthModel3(StreamingContainer):
             text_codes: torch.Tensor,
             sum_condition: torch.Tensor | None = None,
             ca_depth_padding_mask: torch.Tensor | None = None,
-            temporal_target_codes: torch.Tensor | None = None,
+            temporal_input_codes: torch.Tensor | None = None,
+            temporal_include_last_input: bool = False,
+            temporal_key_padding_mask: torch.Tensor | None = None,
             ) -> torch.Tensor:
         """
         """
@@ -377,14 +379,40 @@ class GTemporalDepthModel3(StreamingContainer):
         if ca_depth_padding_mask is not None:
             assert ca_depth_padding_mask.shape == (B, K, T), f"Expected ca_depth_padding_mask shape {(B, K, T)}, got {ca_depth_padding_mask.shape}."
         assert K == self.n_q, f"Expected {self.n_q} codebooks, got {K}."
+        if temporal_input_codes is None:
+            temporal_input_codes = codes
+        if temporal_input_codes.shape != codes.shape:
+            raise ValueError(
+                "temporal_input_codes must match codes, got "
+                f"{tuple(temporal_input_codes.shape)} and "
+                f"{tuple(codes.shape)}."
+            )
         initial = self._get_initial_token().expand(B, K, -1)
         
         # 
-        input_sequence = torch.cat([initial, codes], dim=2) # [B, K, T+1]
+        temporal_sequence = torch.cat(
+            [initial, temporal_input_codes],
+            dim=2,
+        )  # [B, K, T+1]
+        if not temporal_include_last_input:
+            temporal_sequence = temporal_sequence[:, :, :-1]
 
         
         # sum_condition is of shape [B,]
-        temporal_sum_condition = sum_condition.unsqueeze(1).expand(-1, T) # [B, T]
+        temporal_length = temporal_sequence.shape[-1]
+        if (
+            temporal_key_padding_mask is not None
+            and temporal_key_padding_mask.shape != (B, temporal_length)
+        ):
+            raise ValueError(
+                "temporal_key_padding_mask must match temporal sequence "
+                f"{(B, temporal_length)}, got "
+                f"{tuple(temporal_key_padding_mask.shape)}."
+            )
+        temporal_sum_condition = sum_condition.unsqueeze(1).expand(
+            -1,
+            temporal_length,
+        )
 
         # process audio and text conditions
         audio_condition, text_condition = self.process_conditions(audio_codes, text_codes) # B x K=1 x T=125 x dim
@@ -394,26 +422,28 @@ class GTemporalDepthModel3(StreamingContainer):
         text_condition = text_condition.squeeze(1) # B x T=125 dim
 
         transformer_out, temp_logits = self.forward_temporal(
-            input_sequence[:, :, :-1], # [B, K, T]
+            temporal_sequence,
             audio_condition=audio_condition,
             text_condition=text_condition,
             sum_condition=temporal_sum_condition,
-            temporal_target_codes=(
-                codes
-                if temporal_target_codes is None
-                else temporal_target_codes
-            ),
+            key_padding_mask=temporal_key_padding_mask,
         )
+        # Masked-frame teachers expose the final gesture input so every
+        # supervised position can see a complete suffix. The extra output
+        # corresponds to no training target and is intentionally discarded.
+        transformer_out = transformer_out[:, :T]
+        temp_logits = temp_logits[:, :, :T]
         # print(temp_logits.shape)
         
-        assert transformer_out.shape[0] == input_sequence.shape[0]
-        assert transformer_out.shape[1] == input_sequence.shape[2] - 1
+        assert transformer_out.shape[:2] == (B, T)
         # dep_initial = self._get_initial_token().expand(B, -1, T)
         # dep_initial = input_sequence[:, :, 1:]
-        dep_inpseq = input_sequence[:, :, 1:] # [B, K, T]
+        # The kinematic/depth transformer must retain true within-frame
+        # teacher-forcing prefixes even when the temporal input is masked.
+        dep_inpseq = codes
         depth_padding_mask = (dep_inpseq == self.pad_token_id)
 
-        dep_sum_condition = temporal_sum_condition # [B, T]
+        dep_sum_condition = sum_condition.unsqueeze(1).expand(-1, T)
         depth_logits = self.forward_depth_training(
             dep_inpseq[:, :-1, :], # [B, K-1, T]
             transformer_out=transformer_out,
@@ -454,7 +484,7 @@ class GTemporalDepthModel3(StreamingContainer):
             audio_condition: torch.Tensor,
             text_condition: torch.Tensor,
             sum_condition: torch.Tensor | None = None,
-            temporal_target_codes: torch.Tensor | None = None,
+            key_padding_mask: torch.Tensor | None = None,
         ):
         """
         Args:
@@ -487,14 +517,7 @@ class GTemporalDepthModel3(StreamingContainer):
         transformer_out = self.temporal_transformer(
             input_,
             memories=condition_tensors,
-        )
-        # Privileged teacher context is fused only after all temporal mixing.
-        # This placement is essential for leak-free future-gesture teachers:
-        # a future summary attached to an earlier input position could
-        # otherwise relay the current target through causal self-attention.
-        transformer_out = self.augment_temporal_output(
-            transformer_out,
-            temporal_target_codes=temporal_target_codes,
+            key_padding_mask=key_padding_mask,
         )
         if self.out_norm:
             transformer_out = self.out_norm(transformer_out)
@@ -504,20 +527,6 @@ class GTemporalDepthModel3(StreamingContainer):
         logits = self.temporal_classifier(transformer_out)
         logits = logits.unsqueeze(1) # [B, 1, T, card]
         return transformer_out, logits
-
-    def augment_temporal_output(
-        self,
-        temporal_output: torch.Tensor,
-        temporal_target_codes: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Pointwise post-temporal extension hook for privileged teachers.
-
-        ``temporal_target_codes`` contains the unshifted training targets.
-        Released MIBURI deliberately ignores it. Subclasses must enforce
-        target exclusion and must not add later cross-time mixing.
-        """
-
-        return temporal_output
 
 
     

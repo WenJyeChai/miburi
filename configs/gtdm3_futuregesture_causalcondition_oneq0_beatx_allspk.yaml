@@ -1,7 +1,9 @@
-# Privileged teacher: strict future gesture g[t+1:] with causal paired
-# audio/text. Main temporal gesture history and the depth transformer retain
-# released MIBURI behavior.
-project_name: gtdm3_futuregesture_causalcondition_oneq0_beatx_bf16
+# Parameter-free masked-frame teacher. For each selected target, all 20
+# gesture codebooks are hidden through the next 10 raw motion frames
+# (400 ms), then true future gesture becomes visible. Audio/text is globally
+# truncated after the selected target so it remains genuinely causal. Gesture
+# history is limited to raw MIBURI's original 25-token temporal window.
+project_name: gtdm3_maskedfuture400ms_causalcondition_oneq0_beatx_bf16
 
 is_train: True
 ddp: False
@@ -42,12 +44,9 @@ gestureformer_heads: 2
 gestureformer_depformer_layers: 2
 gestureformer_depformer_heads: 1
 
-# Reverse-causal suffix encoder. At t it begins from t+1, never t.
-future_gesture_layers: 4
-future_gesture_heads: 2
-# <=0 means the complete strictly-future suffix.
-future_gesture_context: 0
-future_gesture_gate_init: 0.05
+# At 25 FPS this is 400 ms. With frame_chunk_size=2 the trainer converts
+# these 10 motion frames to a five-token temporal gesture horizon.
+future_gesture_horizon_frames: 10
 
 transformer_layers: 8
 convblock_layers: 2
@@ -71,7 +70,10 @@ drop_lower_crossattn: True
 lower_bodypart_dropprob: 0.1
 
 gan_loss_weight: 0.0
-contrastive_loss_weight: 0.1
+# Sequence-wide auxiliary losses are invalid here because non-target outputs
+# can see their answers. CE/q0 metrics and VAD are masked to the selected
+# target frame; contrastive/reconstruction/GAN losses must remain disabled.
+contrastive_loss_weight: 0.0
 genrecon_loss_weight: 0.0
 
 vad_guidance: True

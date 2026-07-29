@@ -193,6 +193,40 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
         """
         return {}
 
+    def prepare_temporal_teacher_inputs(
+        self,
+        input_codes,
+        target_codes,
+        audio_codes,
+        text_codes,
+        token_loss_mask,
+        split,
+        epoch,
+        iteration,
+    ):
+        """Extension point for privileged teacher input/loss masks.
+
+        The released trainer returns every tensor unchanged and supplies no
+        separate temporal input, preserving the original model and objective.
+        """
+
+        return (
+            None,
+            audio_codes,
+            text_codes,
+            token_loss_mask,
+        )
+
+    def get_temporal_auxiliary_loss_mask(self, token_loss_mask):
+        """Optional [B,T] mask for temporal auxiliary losses.
+
+        Released MIBURI keeps its original VAD reduction. Masked-frame
+        teachers override this so unsupervised, answer-visible positions
+        cannot contribute auxiliary gradients.
+        """
+
+        return None
+
     def get_additional_training_loss(
         self,
         logits,
@@ -302,7 +336,13 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
 
         return audio_emb, text_emb
     
-    def calculate_perplexity(self, logits, target_tokens, pad_token_id=None):
+    def calculate_perplexity(
+        self,
+        logits,
+        target_tokens,
+        pad_token_id=None,
+        loss_mask=None,
+    ):
         """
         Calculate perplexity from model logits.
         
@@ -326,8 +366,18 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
         target_log_probs = log_probs[torch.arange(B*K*T), targets_flat]
         
         mask = (targets_flat != pad_token_id)
+        if loss_mask is not None:
+            if loss_mask.shape != target_tokens.shape:
+                raise ValueError(
+                    "Perplexity loss_mask must match target_tokens, got "
+                    f"{tuple(loss_mask.shape)} and "
+                    f"{tuple(target_tokens.shape)}."
+                )
+            mask = mask & loss_mask.reshape(B*K*T).bool()
 
         # Calculate negative log likelihood
+        if not mask.any():
+            return float("nan")
         nll = -target_log_probs[mask].mean()
         
         # Calculate perplexity
@@ -726,6 +776,22 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
 
             # flatten batches adn time in forward pass
             in_gesture_tokens = torch.cat((upper_codes, masked_lower_codes, masked_face_codes), dim=1) 
+
+            (
+                temporal_input_codes,
+                audio_codes,
+                text_codes,
+                token_loss_mask,
+            ) = self.prepare_temporal_teacher_inputs(
+                in_gesture_tokens,
+                gesture_tokens,
+                audio_codes,
+                text_codes,
+                pad_loss_mask,
+                split="train",
+                epoch=epoch,
+                iteration=its,
+            )
             
             # breakpoint() # check the mask
             lower_cross_attn_mask = torch.zeros_like(gesture_tokens).to(torch.bool) # B x K=20 x T
@@ -734,17 +800,22 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 self.upper_gesture_codec.num_codebooks : self.upper_gesture_codec.num_codebooks + self.lower_gesture_codec.num_codebooks, 
                 :] = True # only apply cross-attention on upper and face tokens
 
+            model_forward_kwargs = self.get_model_forward_kwargs(
+                epoch,
+                its,
+                target_codes=gesture_tokens,
+            )
+            if temporal_input_codes is not None:
+                model_forward_kwargs["temporal_input_codes"] = (
+                    temporal_input_codes
+                )
             model_out = self.model(
                 in_gesture_tokens, 
                 audio_codes=audio_codes,
                 text_codes=text_codes, 
                 sum_condition=tar_spk,
                 ca_depth_padding_mask=lower_cross_attn_mask if self.args.drop_lower_crossattn else None,
-                **self.get_model_forward_kwargs(
-                    epoch,
-                    its,
-                    target_codes=gesture_tokens,
-                ),
+                **model_forward_kwargs,
             ) # B x K=16 x T=25 x cardinality
             if self.args.vad_guidance:
                 model_out, vad_logits = model_out
@@ -771,8 +842,8 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                     reduction="none"
                 )
                 # breakpoint() # check pad_mask
-                loss_k = loss_k * pad_loss_mask[:, k].reshape(B*T) 
-                loss = loss_k.sum() / (pad_loss_mask[:, k].sum() + 1e-12)
+                loss_k = loss_k * token_loss_mask[:, k].reshape(B*T)
+                loss = loss_k.sum() / (token_loss_mask[:, k].sum() + 1e-12)
                 loss_k = loss * (1/K)
 
                 if k < 8:  # upper body + hands
@@ -799,7 +870,8 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
             perplexity = self.calculate_perplexity(
                 logits, 
                 gesture_tokens, 
-                pad_token_id=self.modelout_ignore_index
+                pad_token_id=self.modelout_ignore_index,
+                loss_mask=token_loss_mask,
             )
             self.tracker.update_meter("perplexity", "train", perplexity)
 
@@ -817,7 +889,27 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 vad_loss[seamless_indices] *= 0.1
 
                 vad_loss = vad_loss * vad_loss_mask.unsqueeze(-1).to(vad_loss.dtype) # B x T
-                vad_loss = vad_loss.sum() / (vad_loss_mask.sum() + 1e-12)
+                temporal_auxiliary_mask = (
+                    self.get_temporal_auxiliary_loss_mask(token_loss_mask)
+                )
+                if temporal_auxiliary_mask is None:
+                    vad_loss = vad_loss.sum() / (
+                        vad_loss_mask.sum() + 1e-12
+                    )
+                else:
+                    if temporal_auxiliary_mask.shape != vad_loss.shape:
+                        raise ValueError(
+                            "Temporal auxiliary mask must match VAD logits, "
+                            f"got {tuple(temporal_auxiliary_mask.shape)} and "
+                            f"{tuple(vad_loss.shape)}."
+                        )
+                    weighted_vad_mask = (
+                        temporal_auxiliary_mask.to(vad_loss.dtype)
+                        * vad_loss_mask.unsqueeze(-1).to(vad_loss.dtype)
+                    )
+                    vad_loss = (
+                        vad_loss * weighted_vad_mask
+                    ).sum() / (weighted_vad_mask.sum() + 1e-12)
                 vad_loss = vad_loss * self.args.vad_loss_weight
                 g_loss_final += vad_loss
                 self.tracker.update_meter("vad_loss", "train", vad_loss.item())
@@ -1170,7 +1262,7 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
             additional_loss = self.get_additional_training_loss(
                 logits,
                 gesture_tokens,
-                pad_loss_mask,
+                token_loss_mask,
                 epoch,
                 its,
             )
@@ -1334,6 +1426,24 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 
                 
                 gesture_tokens = torch.cat((upper_codes, lower_codes, face_codes), dim=1) # B x K=16 x T=25
+                pad_mask = (
+                    gesture_tokens != self.modelout_ignore_index
+                ).float()
+                (
+                    temporal_input_codes,
+                    audio_codes,
+                    text_codes,
+                    token_loss_mask,
+                ) = self.prepare_temporal_teacher_inputs(
+                    gesture_tokens,
+                    gesture_tokens,
+                    audio_codes,
+                    text_codes,
+                    pad_mask,
+                    split="val",
+                    epoch=epoch,
+                    iteration=its,
+                )
 
                 # breakpoint() # check the mask
                 lower_cross_attn_mask = torch.zeros_like(gesture_tokens).to(torch.bool) # B x K=20 x T
@@ -1343,12 +1453,18 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                     :] = True # only apply cross-attention on upper and face tokens
                 # flatten batches adn time in forward pass
                 in_gesture_tokens = gesture_tokens
+                model_forward_kwargs = {}
+                if temporal_input_codes is not None:
+                    model_forward_kwargs["temporal_input_codes"] = (
+                        temporal_input_codes
+                    )
                 model_out = self.model(
                     in_gesture_tokens, 
                     audio_codes=audio_codes,
                     text_codes=text_codes, 
                     sum_condition=tar_spk,
                     ca_depth_padding_mask=lower_cross_attn_mask if self.args.drop_lower_crossattn else None,
+                    **model_forward_kwargs,
                     ) # B x K=16 x T=25 x cardinality
                 
                 # TODO: Change loss
@@ -1360,7 +1476,6 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 face_loss = 0
                 lower_loss = 0
                 
-                pad_mask = (gesture_tokens != self.modelout_ignore_index).float() # B x K x T
                 for k in range(K):
                     loss_k = F.cross_entropy(
                         logits[:, k].reshape(B*T, card),
@@ -1368,8 +1483,10 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                         reduction="none"
                     )
                     # breakpoint() # check pad_mask
-                    loss_k = loss_k * pad_mask[:, k].reshape(B*T) 
-                    loss = loss_k.sum() / (pad_mask[:, k].sum() + 1e-12)
+                    loss_k = loss_k * token_loss_mask[:, k].reshape(B*T)
+                    loss = loss_k.sum() / (
+                        token_loss_mask[:, k].sum() + 1e-12
+                    )
                     loss_k = loss * (1/K)
 
                     if k < 8:  # upper body + hands
@@ -1395,14 +1512,15 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 perplexity = self.calculate_perplexity(
                     logits, 
                     gesture_tokens, 
-                    pad_token_id=self.modelout_ignore_index
+                    pad_token_id=self.modelout_ignore_index,
+                    loss_mask=token_loss_mask,
                 )
                 self.tracker.update_meter("perplexity", "val", perplexity)
 
                 self.record_validation_diagnostics(
                     logits,
                     gesture_tokens,
-                    pad_mask,
+                    token_loss_mask,
                 )
 
                 if self.args.debug:

@@ -1,7 +1,8 @@
-# Privileged teacher: strict future gesture g[t+1:] plus complete paired
-# audio/text temporal context. The depth transformer remains locally
-# conditioned exactly as in released MIBURI.
-project_name: gtdm3_futuregesture_fullcondition_oneq0_beatx_bf16
+# Parameter-free masked-frame teacher. Gesture becomes visible only after a
+# 10-motion-frame (400 ms) guard, while complete paired audio/text is visible.
+# Gesture history retains raw MIBURI's 25-token window; the kinematic/depth
+# transformer remains released MIBURI.
+project_name: gtdm3_maskedfuture400ms_fullcondition_oneq0_beatx_bf16
 
 is_train: True
 ddp: False
@@ -42,12 +43,9 @@ gestureformer_heads: 2
 gestureformer_depformer_layers: 2
 gestureformer_depformer_heads: 1
 
-# Identical future-gesture capacity to the causal-condition teacher.
-future_gesture_layers: 4
-future_gesture_heads: 2
-# <=0 means the complete strictly-future suffix.
-future_gesture_context: 0
-future_gesture_gate_init: 0.05
+# At 25 FPS this is 400 ms. With frame_chunk_size=2 the trainer converts
+# these 10 motion frames to a five-token temporal gesture horizon.
+future_gesture_horizon_frames: 10
 
 transformer_layers: 8
 convblock_layers: 2
@@ -71,7 +69,10 @@ drop_lower_crossattn: True
 lower_bodypart_dropprob: 0.1
 
 gan_loss_weight: 0.0
-contrastive_loss_weight: 0.1
+# Sequence-wide auxiliary losses are invalid here because non-target outputs
+# can see their answers. CE/q0 metrics and VAD are masked to the selected
+# target frame; contrastive/reconstruction/GAN losses must remain disabled.
+contrastive_loss_weight: 0.0
 genrecon_loss_weight: 0.0
 
 vad_guidance: True

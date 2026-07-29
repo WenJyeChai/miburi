@@ -310,18 +310,16 @@ def parse_args():
     parser.add("--pretrain_warmup_epochs", default=0, type=int)
     parser.add("--memory_dropout_prob", default=0.0, type=float)
     parser.add("--memory_embnoise_prob", default=0.0, type=float)
-    parser.add("--future_gesture_layers", default=4, type=int)
-    parser.add("--future_gesture_heads", default=2, type=int)
     parser.add(
-        "--future_gesture_context",
-        default=0,
+        "--future_gesture_horizon_frames",
+        default=10,
         type=int,
         help=(
-            "Reverse-causal future gesture window; <=0 uses the complete "
-            "future suffix."
+            "Number of raw motion frames hidden after the masked target "
+            "before future gesture becomes visible. At 25 FPS, 10 frames "
+            "is 400 ms."
         ),
     )
-    parser.add("--future_gesture_gate_init", default=0.05, type=float)
 
     parser.add("--num_temp_classifiers", default=2, type=int)
 

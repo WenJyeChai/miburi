@@ -1,4 +1,4 @@
-"""Focused checks for privileged future-gesture MIBURI teachers."""
+"""Focused checks for parameter-free masked-frame gesture teachers."""
 
 import torch
 
@@ -6,129 +6,202 @@ from miburi.models.gesture_lm import GTemporalDepthModel3
 from miburi.models.gesture_lm_future_gesture import (
     GTemporalDepthModel3FutureGesture,
     GTemporalDepthModel3FutureGestureFullCondition,
+    build_masked_future_gesture_inputs,
+    truncate_condition_codes_after_targets,
 )
 from miburi.models.gesture_lm_offline import StaticMemoryCrossAttention
 from scripts.smoke_test_gesture_lm_offline import (
     _batch,
     _model_kwargs,
-    _temporal_inputs,
 )
 
 
 def _make_teacher(model_class=GTemporalDepthModel3FutureGesture):
-    return model_class(
-        **_model_kwargs(),
-        future_gesture_layers=2,
-        future_gesture_heads=4,
-        future_gesture_context=4,
-        future_gesture_gate_init=0.2,
+    return model_class(**_model_kwargs())
+
+
+def _masked_inputs(
+    model,
+    codes,
+    target_times,
+    horizon_tokens,
+    past_context_tokens=25,
+):
+    return build_masked_future_gesture_inputs(
+        codes,
+        codes,
+        target_times,
+        horizon_tokens=horizon_tokens,
+        past_context_tokens=past_context_tokens,
+        mask_token_id=model.pad_token_id,
     )
 
 
-def _temporal_logits(model, codes, audio, text, speaker):
-    temporal_input = _temporal_inputs(model, codes)
+def _temporal_logits(
+    model,
+    temporal_codes,
+    audio,
+    text,
+    speaker,
+):
+    initial = model._get_initial_token().expand(
+        temporal_codes.shape[0],
+        model.n_q,
+        -1,
+    )
+    temporal_input = torch.cat([initial, temporal_codes], dim=-1)
     audio_condition, text_condition = model.process_conditions(audio, text)
-    temporal_speaker = speaker[:, None].expand(-1, codes.shape[-1])
+    temporal_speaker = speaker[:, None].expand(
+        -1,
+        temporal_input.shape[-1],
+    )
     _, logits = model.forward_temporal(
         temporal_input,
         audio_condition.squeeze(1),
         text_condition.squeeze(1),
         temporal_speaker,
-        temporal_target_codes=codes,
     )
-    return logits
+    return logits[:, :, : temporal_codes.shape[-1]]
 
 
-def test_strict_future_context_excludes_current_target():
-    torch.manual_seed(10)
-    model = _make_teacher().eval()
+def test_target_and_guard_are_physically_absent():
+    model = _make_teacher()
     codes, _, _, _ = _batch()
-    target_time = 1
+    target_times = torch.tensor([0, 1])
+    horizon = 2
+    masked = _masked_inputs(model, codes, target_times, horizon)
 
-    reference = model.encode_strict_future_gesture(codes)
-    changed_current = codes.clone()
-    changed_current[:, :, target_time] = (
-        changed_current[:, :, target_time] + 1
-    ) % model.card
-    current_context = model.encode_strict_future_gesture(changed_current)
-    torch.testing.assert_close(
-        reference[:, target_time],
-        current_context[:, target_time],
-    )
-
-    changed_future = codes.clone()
-    changed_future[:, :, target_time + 1] = (
-        changed_future[:, :, target_time + 1] + 1
-    ) % model.card
-    future_context = model.encode_strict_future_gesture(changed_future)
-    assert not torch.allclose(
-        reference[:, target_time],
-        future_context[:, target_time],
-    )
-    assert torch.count_nonzero(reference[:, -1]) == 0
+    for batch_index, target_time in enumerate(target_times.tolist()):
+        assert (
+            masked[
+                batch_index,
+                :,
+                target_time:target_time + horizon,
+            ]
+            == model.pad_token_id
+        ).all()
+        torch.testing.assert_close(
+            masked[batch_index, :, target_time + horizon:],
+            codes[batch_index, :, target_time + horizon:],
+        )
 
 
-def test_temporal_q0_has_no_same_target_leakage():
-    torch.manual_seed(11)
-    model = _make_teacher().eval()
-    codes, audio, text, speaker = _batch()
-    target_time = 1
-    reference = _temporal_logits(
+def test_history_older_than_raw_miburi_context_is_absent():
+    model = _make_teacher()
+    codes = torch.randint(model.card, (1, model.n_q, 12))
+    target_times = torch.tensor([8])
+    masked = _masked_inputs(
         model,
         codes,
+        target_times,
+        horizon_tokens=2,
+        past_context_tokens=3,
+    )
+    # Query t keeps source gestures g[t-context:t] = g[5:8].
+    assert (masked[:, :, :5] == model.pad_token_id).all()
+    torch.testing.assert_close(masked[:, :, 5:8], codes[:, :, 5:8])
+    assert (masked[:, :, 8:10] == model.pad_token_id).all()
+    torch.testing.assert_close(masked[:, :, 10:], codes[:, :, 10:])
+    key_padding = model.build_temporal_key_padding_mask(masked)
+    # BOS + source g[0:5] are outside the raw past window.
+    assert key_padding[:, :6].all()
+    assert not key_padding[:, 6:9].any()
+    # Source g[8:10] is the target/400-ms guard.
+    assert key_padding[:, 9:11].all()
+    assert not key_padding[:, 11:].any()
+
+
+def test_current_and_guard_cannot_change_target_logits_but_future_can():
+    torch.manual_seed(21)
+    model = _make_teacher().eval()
+    codes, audio, text, speaker = _batch()
+    target_times = torch.zeros(codes.shape[0], dtype=torch.long)
+    horizon = 2
+
+    reference = _temporal_logits(
+        model,
+        _masked_inputs(model, codes, target_times, horizon),
         audio,
         text,
         speaker,
     )
 
-    changed_current = codes.clone()
-    changed_current[:, :, target_time] = (
-        changed_current[:, :, target_time] + 1
+    changed_hidden = codes.clone()
+    changed_hidden[:, :, :horizon] = (
+        changed_hidden[:, :, :horizon] + 1
     ) % model.card
-    current_logits = _temporal_logits(
+    hidden_logits = _temporal_logits(
         model,
-        changed_current,
+        _masked_inputs(
+            model,
+            changed_hidden,
+            target_times,
+            horizon,
+        ),
         audio,
         text,
         speaker,
     )
     torch.testing.assert_close(
-        reference[:, :, target_time],
-        current_logits[:, :, target_time],
+        reference[:, :, 0],
+        hidden_logits[:, :, 0],
     )
 
     changed_future = codes.clone()
-    changed_future[:, :, target_time + 1] = (
-        changed_future[:, :, target_time + 1] + 1
+    changed_future[:, :, horizon] = (
+        changed_future[:, :, horizon] + 1
     ) % model.card
     future_logits = _temporal_logits(
         model,
-        changed_future,
+        _masked_inputs(
+            model,
+            changed_future,
+            target_times,
+            horizon,
+        ),
         audio,
         text,
         speaker,
     )
     assert not torch.allclose(
-        reference[:, :, target_time],
-        future_logits[:, :, target_time],
+        reference[:, :, 0],
+        future_logits[:, :, 0],
     )
 
 
-def test_condition_variants_differ_only_by_temporal_condition_mask():
-    torch.manual_seed(12)
+def test_condition_truncation_is_per_sample_and_target_aligned():
+    condition = torch.arange(2 * 2 * 8).reshape(2, 2, 8)
+    target_times = torch.tensor([1, 2])
+    truncated = truncate_condition_codes_after_targets(
+        condition,
+        target_times,
+        condition_steps_per_gesture=2,
+        null_token_id=-1,
+    )
+    torch.testing.assert_close(truncated[0, :, :4], condition[0, :, :4])
+    torch.testing.assert_close(truncated[1, :, :6], condition[1, :, :6])
+    assert (truncated[0, :, 4:] == -1).all()
+    assert (truncated[1, :, 6:] == -1).all()
+
+
+def test_condition_variants_have_original_parameter_count_and_masks():
+    torch.manual_seed(22)
+    original = GTemporalDepthModel3(**_model_kwargs())
     causal = _make_teacher(GTemporalDepthModel3FutureGesture)
     full = _make_teacher(
         GTemporalDepthModel3FutureGestureFullCondition
     )
-    assert sum(p.numel() for p in causal.parameters()) == sum(
-        p.numel() for p in full.parameters()
-    )
+    expected = sum(parameter.numel() for parameter in original.parameters())
+    assert sum(parameter.numel() for parameter in causal.parameters()) == expected
+    assert sum(parameter.numel() for parameter in full.parameters()) == expected
+    assert set(original.state_dict()) == set(causal.state_dict())
+    assert set(original.state_dict()) == set(full.state_dict())
 
     for layer in causal.temporal_transformer.layers:
-        assert layer.self_attn.causal
+        assert not layer.self_attn.causal
         assert all(attention.causal for attention in layer.cross_attns)
     for layer in full.temporal_transformer.layers:
-        assert layer.self_attn.causal
+        assert not layer.self_attn.causal
         assert all(
             isinstance(attention, StaticMemoryCrossAttention)
             for attention in layer.cross_attns
@@ -137,59 +210,87 @@ def test_condition_variants_differ_only_by_temporal_condition_mask():
     for model in (causal, full):
         assert all(
             layer.self_attn.causal
-            for layer in model.future_gesture_transformer.layers
-        )
-        assert all(
-            layer.self_attn.causal
             for layer in model.depth_transformer.layers
         )
 
 
-def test_causal_condition_hides_future_audio_and_text():
-    torch.manual_seed(13)
-    base = _make_teacher().eval()
+def test_causal_condition_cannot_relay_future_audio_text():
+    torch.manual_seed(23)
+    causal = _make_teacher().eval()
     full = _make_teacher(
         GTemporalDepthModel3FutureGestureFullCondition
     ).eval()
-    full.load_state_dict(base.state_dict())
+    full.load_state_dict(causal.state_dict())
     codes, audio, text, speaker = _batch()
-
-    base_reference = _temporal_logits(
-        base,
+    target_times = torch.zeros(codes.shape[0], dtype=torch.long)
+    temporal_codes = _masked_inputs(
+        causal,
         codes,
+        target_times,
+        horizon_tokens=2,
+    )
+
+    causal_audio = truncate_condition_codes_after_targets(
         audio,
+        target_times,
+        condition_steps_per_gesture=1,
+        null_token_id=-1,
+    )
+    causal_text = truncate_condition_codes_after_targets(
         text,
+        target_times,
+        condition_steps_per_gesture=1,
+        null_token_id=-1,
+    )
+    causal_reference = _temporal_logits(
+        causal,
+        temporal_codes,
+        causal_audio,
+        causal_text,
         speaker,
     )
+
+    changed_audio = audio.clone()
+    changed_text = text.clone()
+    changed_audio[:, :, 1:] = (changed_audio[:, :, 1:] + 1) % 17
+    changed_text[:, :, 1:] = (changed_text[:, :, 1:] + 1) % 19
+    changed_causal_audio = truncate_condition_codes_after_targets(
+        changed_audio,
+        target_times,
+        condition_steps_per_gesture=1,
+        null_token_id=-1,
+    )
+    changed_causal_text = truncate_condition_codes_after_targets(
+        changed_text,
+        target_times,
+        condition_steps_per_gesture=1,
+        null_token_id=-1,
+    )
+    causal_changed = _temporal_logits(
+        causal,
+        temporal_codes,
+        changed_causal_audio,
+        changed_causal_text,
+        speaker,
+    )
+    torch.testing.assert_close(
+        causal_reference[:, :, 0],
+        causal_changed[:, :, 0],
+    )
+
     full_reference = _temporal_logits(
         full,
-        codes,
+        temporal_codes,
         audio,
         text,
-        speaker,
-    )
-    changed_audio = audio.clone()
-    changed_audio[:, :, -1] = (changed_audio[:, :, -1] + 1) % 17
-    changed_text = text.clone()
-    changed_text[:, :, -1] = (changed_text[:, :, -1] + 1) % 19
-
-    base_changed = _temporal_logits(
-        base,
-        codes,
-        changed_audio,
-        changed_text,
         speaker,
     )
     full_changed = _temporal_logits(
         full,
-        codes,
+        temporal_codes,
         changed_audio,
         changed_text,
         speaker,
-    )
-    torch.testing.assert_close(
-        base_reference[:, :, 0],
-        base_changed[:, :, 0],
     )
     assert not torch.allclose(
         full_reference[:, :, 0],
@@ -197,38 +298,45 @@ def test_causal_condition_hides_future_audio_and_text():
     )
 
 
-def test_base_checkpoint_warm_start_and_backward():
-    torch.manual_seed(14)
+def test_base_checkpoint_compatibility_and_backward():
+    torch.manual_seed(24)
     base = GTemporalDepthModel3(**_model_kwargs())
     teacher = _make_teacher().train()
     teacher.load_state_dict(base.state_dict())
-    for key, value in base.state_dict().items():
-        torch.testing.assert_close(teacher.state_dict()[key], value)
-
     codes, audio, text, speaker = _batch()
+    target_times = torch.zeros(codes.shape[0], dtype=torch.long)
+    temporal_codes = _masked_inputs(
+        teacher,
+        codes,
+        target_times,
+        horizon_tokens=2,
+    )
     logits = teacher(
         codes,
         audio_codes=audio,
         text_codes=text,
         sum_condition=speaker,
+        temporal_input_codes=temporal_codes,
     )
     assert logits.shape == (2, 20, 4, 17)
-    logits.square().mean().backward()
-    assert teacher.future_gesture_gate.grad is not None
-    assert teacher.future_gesture_fusion.weight.grad is not None
-    assert any(
-        parameter.grad is not None
-        for parameter in teacher.future_gesture_transformer.parameters()
+    logits[:, :, 0].square().mean().backward()
+    assert teacher.temporal_classifier.weight.grad is not None
+    assert all(
+        classifier.weight.grad is not None
+        for classifier in teacher.depformer_classifier
     )
 
 
 if __name__ == "__main__":
-    test_strict_future_context_excludes_current_target()
-    test_temporal_q0_has_no_same_target_leakage()
-    test_condition_variants_differ_only_by_temporal_condition_mask()
-    test_causal_condition_hides_future_audio_and_text()
-    test_base_checkpoint_warm_start_and_backward()
+    test_target_and_guard_are_physically_absent()
+    test_history_older_than_raw_miburi_context_is_absent()
+    test_current_and_guard_cannot_change_target_logits_but_future_can()
+    test_condition_truncation_is_per_sample_and_target_aligned()
+    test_condition_variants_have_original_parameter_count_and_masks()
+    test_causal_condition_cannot_relay_future_audio_text()
+    test_base_checkpoint_compatibility_and_backward()
     print(
-        "Future-gesture teacher smoke tests passed "
-        "(strict target exclusion/masks/warm-start/backward)."
+        "Masked-frame future-gesture smoke tests passed "
+        "(25-token past/400ms guard/target exclusion/condition isolation/"
+        "parameter count)."
     )
