@@ -255,6 +255,21 @@ class alignment(object):
 class FIDCalculator(object):
 
     @staticmethod
+    def _sqrtm(matrix):
+        """Call SciPy ``sqrtm`` across its old and new return APIs.
+
+        SciPy <= 1.17 accepts ``disp=False`` and returns ``(root, error)``.
+        Newer SciPy versions removed ``disp`` and return only the root matrix.
+        """
+        try:
+            result = linalg.sqrtm(matrix, disp=False)
+        except TypeError as error:
+            if "disp" not in str(error):
+                raise
+            result = linalg.sqrtm(matrix)
+        return result[0] if isinstance(result, tuple) else result
+
+    @staticmethod
     def frechet_distance(samples_A, samples_B):
         A_mu = np.mean(samples_A, axis=0)
         A_sigma = np.cov(samples_A, rowvar=False)
@@ -302,14 +317,16 @@ class FIDCalculator(object):
         diff = mu1 - mu2
 
         # Product might be almost singular
-        covmean, _ = linalg.sqrtm(sigma1.dot(sigma2), disp=False)
+        covmean = FIDCalculator._sqrtm(sigma1.dot(sigma2))
         #print(diff, covmean[0])
         if not np.isfinite(covmean).all():
             msg = ('fid calculation produces singular product; '
                     'adding %s to diagonal of cov estimates') % eps
             print(msg)
             offset = np.eye(sigma1.shape[0]) * eps
-            covmean = linalg.sqrtm((sigma1 + offset).dot(sigma2 + offset))
+            covmean = FIDCalculator._sqrtm(
+                (sigma1 + offset).dot(sigma2 + offset)
+            )
 
         # Numerical error might give slight imaginary component
         if np.iscomplexobj(covmean):
