@@ -56,7 +56,22 @@ class UpperFaceLowerGTDM3ResetFutureTrainer(
                 "architecture ablation."
             )
 
-        frame_size = int(self.upper_gesture_codec.frame_size)
+        codec_frame_sizes = {
+            int(codec.frame_size)
+            for codec in (
+                self.upper_gesture_codec,
+                self.lower_gesture_codec,
+                self.face_gesture_codec,
+            )
+        }
+        configured_frame_size = int(args.frame_chunk_size)
+        if codec_frame_sizes != {configured_frame_size}:
+            raise ValueError(
+                "T2 requires upper/lower/face codec frame sizes to match "
+                f"frame_chunk_size={configured_frame_size}; got "
+                f"{sorted(codec_frame_sizes)}."
+            )
+        frame_size = configured_frame_size
         if self.future_horizon_motion_frames % frame_size:
             raise ValueError(
                 "T2's raw suffix must begin on an exact gesture-token "

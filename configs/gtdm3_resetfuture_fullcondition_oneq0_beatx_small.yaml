@@ -95,7 +95,10 @@ contrastive_loss_weight: 0.0
 genrecon_loss_weight: 0.0
 
 vad_guidance: True
-vad_use_face_logits: True
+# The selected target gesture is masked for T2. Feeding teacher-forced current
+# face logits into the VAD head would expose that target through an auxiliary
+# path, so this must remain disabled for the future-teacher experiment.
+vad_use_face_logits: False
 vad_loss_weight: 0.05
 
 trainer: UpperFaceLowerGTDM3ResetFuture

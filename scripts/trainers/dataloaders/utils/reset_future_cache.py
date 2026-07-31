@@ -251,6 +251,10 @@ class ResetFutureManifestCache:
                 "Manifest sequence_target_offsets has the wrong length."
             )
         target_rows = int(self.target_token_indices.shape[0])
+        if target_rows != int(self.metadata["target_count"]):
+            raise RuntimeError(
+                "Reset target manifest length differs from metadata."
+            )
         for values in (
             self.future_start_tokens,
             self.valid_future_lengths,
@@ -262,7 +266,81 @@ class ResetFutureManifestCache:
                 raise RuntimeError(
                     "Reset target manifest arrays have inconsistent lengths."
                 )
+        if (
+            self.sequence_target_offsets[0] != 0
+            or self.sequence_target_offsets[-1] != target_rows
+            or (np.diff(self.sequence_target_offsets) <= 0).any()
+        ):
+            raise RuntimeError(
+                "Manifest sequence target offsets are invalid."
+            )
+        if (
+            (self.target_sequence_indices < 0).any()
+            or (
+                self.target_sequence_indices
+                >= len(self.sequence_ids)
+            ).any()
+        ):
+            raise RuntimeError(
+                "Manifest target rows reference invalid sequences."
+            )
+        for sequence_index in range(len(self.sequence_ids)):
+            start = int(
+                self.sequence_target_offsets[sequence_index]
+            )
+            end = int(
+                self.sequence_target_offsets[sequence_index + 1]
+            )
+            if not np.all(
+                self.target_sequence_indices[start:end]
+                == sequence_index
+            ):
+                raise RuntimeError(
+                    "Manifest target rows are not grouped by sequence."
+                )
+        if (
+            (self.valid_future_lengths <= 0).any()
+            or (
+                self.valid_future_lengths
+                > self.future_window_tokens
+            ).any()
+        ):
+            raise RuntimeError(
+                "Manifest contains invalid reset-window lengths."
+            )
+        if not np.array_equal(
+            self.future_start_tokens,
+            self.target_token_indices + self.future_offset_tokens,
+        ):
+            raise RuntimeError(
+                "Manifest target/future offsets are inconsistent."
+            )
+        gesture_steps = (
+            int(self.metadata["pose_length"])
+            // int(self.metadata["frame_size"])
+        )
+        if (
+            self.future_start_tokens + self.valid_future_lengths
+            > gesture_steps
+        ).any():
+            raise RuntimeError(
+                "Manifest reset windows extend past their source clips."
+            )
+        if (
+            not self.shard_names
+            or (self.shard_indices < 0).any()
+            or (self.shard_indices >= len(self.shard_names)).any()
+            or (self.shard_rows < 0).any()
+        ):
+            raise RuntimeError(
+                "Manifest contains invalid reset-cache shard references."
+            )
         self._shards: dict[int, h5py.File] = {}
+        # Validate every shard at startup. A missing or damaged late shard
+        # should stop the run now, not after several training epochs finally
+        # select one of its target rows.
+        for shard_index in range(len(self.shard_names)):
+            self._open_shard(shard_index)
 
     def close(self) -> None:
         manifest = getattr(self, "_manifest", None)
@@ -307,6 +385,58 @@ class ResetFutureManifestCache:
             shard.close()
             raise RuntimeError(
                 f"Reset cache shard provenance mismatch: {path}"
+            )
+        codes = shard.get("reset_future_codes")
+        written = shard.get("written")
+        manifest_rows = shard.get("manifest_row")
+        if codes is None or written is None or manifest_rows is None:
+            shard.close()
+            raise RuntimeError(
+                f"Reset cache shard is missing required datasets: {path}"
+            )
+        expected_tail = (
+            self.num_codebooks,
+            self.future_window_tokens,
+        )
+        if (
+            codes.ndim != 3
+            or codes.shape[1:] != expected_tail
+            or codes.dtype != np.dtype(np.uint16)
+            or written.shape != (codes.shape[0],)
+            or manifest_rows.shape != (codes.shape[0],)
+        ):
+            shard.close()
+            raise RuntimeError(
+                f"Reset cache shard has an invalid layout: {path}"
+            )
+        if not np.asarray(written[:], dtype=np.bool_).all():
+            shard.close()
+            raise RuntimeError(
+                f"Completed reset cache shard still has gaps: {path}"
+            )
+        stored_manifest_rows = np.asarray(
+            manifest_rows[:],
+            dtype=np.int64,
+        )
+        expected_manifest_rows = np.flatnonzero(
+            self.shard_indices == shard_index
+        ).astype(np.int64)
+        expected_shard_rows = self.shard_rows[
+            expected_manifest_rows
+        ]
+        if (
+            not np.array_equal(
+                stored_manifest_rows,
+                expected_manifest_rows,
+            )
+            or not np.array_equal(
+                expected_shard_rows,
+                np.arange(codes.shape[0], dtype=np.int64),
+            )
+        ):
+            shard.close()
+            raise RuntimeError(
+                f"Reset cache shard rows disagree with the manifest: {path}"
             )
         self._shards[shard_index] = shard
         return shard

@@ -304,6 +304,62 @@ def _write_manifest(
             h5.create_dataset(name, data=manifest[name])
 
 
+def _validate_existing_manifest(
+    path: str,
+    manifest,
+    *,
+    build_signature: str,
+) -> None:
+    """Require an existing resume manifest to match every generated field."""
+
+    string_fields = (
+        "sequence_ids",
+        "sequence_splits",
+        "shard_names",
+    )
+    array_fields = (
+        "sequence_target_offsets",
+        "target_token_index",
+        "future_start_token",
+        "raw_future_start_frame",
+        "raw_future_end_frame",
+        "valid_future_length",
+        "sequence_index",
+        "target_slot",
+        "shard_index",
+        "shard_row",
+    )
+    with h5py.File(path, "r") as existing:
+        if str(existing.attrs.get("build_signature", "")) != (
+            build_signature
+        ):
+            raise RuntimeError(
+                "Existing target manifest provenance differs."
+            )
+        for field in string_fields:
+            stored = tuple(
+                value.decode("utf-8")
+                if isinstance(value, bytes)
+                else str(value)
+                for value in existing[field][:]
+            )
+            expected = tuple(str(value) for value in manifest[field])
+            if stored != expected:
+                raise RuntimeError(
+                    f"Existing target manifest field {field!r} differs."
+                )
+        for field in array_fields:
+            stored = np.asarray(existing[field][:])
+            expected = np.asarray(manifest[field])
+            if stored.dtype != expected.dtype or not np.array_equal(
+                stored,
+                expected,
+            ):
+                raise RuntimeError(
+                    f"Existing target manifest field {field!r} differs."
+                )
+
+
 def _compression_kwargs(args) -> dict[str, Any]:
     compression = str(args.reset_future_cache_compression).lower()
     if compression == "none":
@@ -500,21 +556,11 @@ def build_cache(args) -> None:
 
     manifest = _manifest_arrays(args)
     if os.path.exists(manifest_path):
-        with h5py.File(manifest_path, "r") as existing:
-            if str(existing.attrs.get("build_signature", "")) != signature:
-                raise RuntimeError(
-                    "Existing target manifest provenance differs."
-                )
-            existing_ids = tuple(
-                value.decode("utf-8")
-                if isinstance(value, bytes)
-                else str(value)
-                for value in existing["sequence_ids"][:]
-            )
-        if existing_ids != tuple(manifest["sequence_ids"]):
-            raise RuntimeError(
-                "Existing target manifest has different sequence IDs."
-            )
+        _validate_existing_manifest(
+            manifest_path,
+            manifest,
+            build_signature=signature,
+        )
     else:
         _write_manifest(
             manifest_path,
@@ -538,6 +584,15 @@ def build_cache(args) -> None:
         codec.eval()
         for parameter in codec.parameters():
             parameter.requires_grad_(False)
+    codec_frame_sizes = {
+        int(codec.frame_size) for codec in codecs
+    }
+    configured_frame_size = int(args.frame_chunk_size)
+    if codec_frame_sizes != {configured_frame_size}:
+        raise RuntimeError(
+            "Gesture codec frame sizes must all match frame_chunk_size="
+            f"{configured_frame_size}; got {sorted(codec_frame_sizes)}."
+        )
     num_codebooks = sum(int(codec.num_codebooks) for codec in codecs)
     cardinalities = {int(codec.cardinality) for codec in codecs}
     if len(cardinalities) != 1:
