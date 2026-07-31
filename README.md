@@ -297,15 +297,14 @@ python scripts/train.py \
     --wandb_project miburi --wandb_group t2-reset-future-goodspk
 ```
 
-The primary cache pilot uses eight fixed uniformly sampled targets per
-10-second clip and a 16-token (1.28-second) future window. The builder batches
-all fixed-length raw windows through each non-streaming causal codec, writes
-only `uint16` RVQ indices to sharded HDF5 files, and can resume incomplete
-shards. Training chooses one manifest target per clip per epoch and cycles all
-eight targets without rerunning the codecs. In the small-set config, the
-training batch size is 128 clips, while each cache-build pass uses 16 clips
-times eight targets = 128 independent reset windows. The all-speaker config
-remains available as
+The good-speaker cache uses all 105 target positions whose five-token guard
+and 16-token (1.28-second) future window fit in a 10-second clip. The builder
+batches fixed-length raw windows through each non-streaming causal codec in
+chunks of 128, writes only `uint16` RVQ indices to sharded HDF5 files, and can
+resume incomplete shards. Training chooses one manifest target per clip per
+epoch and cycles all 105 without rerunning the codecs, so the training batch
+size and epoch length remain 128 clips and match the original good-speaker
+configuration. The all-speaker sparse-pilot config remains available as
 `configs/gtdm3_resetfuture_fullcondition_oneq0_beatx_allspk.yaml`.
 
 The first reset token remains visible. Set `--reset_prefix_drop_tokens 1` for

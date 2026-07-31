@@ -58,6 +58,20 @@ def build_reset_future_cache_signature_payload(args) -> dict[str, Any]:
             "future_window_ms must map to a positive whole number of gesture "
             "tokens for fixed-window cache construction."
         )
+    gesture_tokens = int(args.pose_length) // frame_size
+    offset_tokens = (
+        int(args.future_gesture_horizon_frames) // frame_size
+    )
+    window_tokens = window_frames // frame_size
+    eligible_targets = (
+        gesture_tokens - offset_tokens - window_tokens + 1
+    )
+    requested_targets = int(args.reset_future_targets_per_clip)
+    target_sampling = (
+        "exhaustive_all_eligible"
+        if requested_targets == eligible_targets
+        else "fixed_uniform_random_without_replacement"
+    )
     return {
         "schema": RESET_FUTURE_CACHE_SCHEMA,
         "schema_version": RESET_FUTURE_CACHE_VERSION,
@@ -85,9 +99,10 @@ def build_reset_future_cache_signature_payload(args) -> dict[str, Any]:
             int(args.future_gesture_horizon_frames) // frame_size
         ),
         "future_window_frames": int(window_frames),
-        "future_window_tokens": int(window_frames // frame_size),
-        "targets_per_clip": int(args.reset_future_targets_per_clip),
-        "target_sampling": "fixed_uniform_random_without_replacement",
+        "future_window_tokens": int(window_tokens),
+        "targets_per_clip": requested_targets,
+        "eligible_targets_per_clip": int(eligible_targets),
+        "target_sampling": target_sampling,
         "manifest_seed": int(args.reset_future_manifest_seed),
         "upperlower_nfeats": int(args.upperlower_nfeats),
         "lowertrans_nfeats": int(args.lowertrans_nfeats),

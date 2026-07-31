@@ -169,13 +169,16 @@ def _manifest_arrays(args):
                     int(args.reset_future_manifest_seed),
                 )
             )
-            sampled = np.sort(
-                rng.choice(
-                    candidate_targets,
-                    size=targets_per_clip,
-                    replace=False,
+            if targets_per_clip == candidate_targets.shape[0]:
+                sampled = candidate_targets
+            else:
+                sampled = np.sort(
+                    rng.choice(
+                        candidate_targets,
+                        size=targets_per_clip,
+                        replace=False,
+                    )
                 )
-            )
             sequence_index = len(sequence_ids)
             sequence_ids.append(sequence_id)
             sequence_splits.append(split)
@@ -664,6 +667,13 @@ def build_cache(args) -> None:
         raise ValueError(
             "reset_future_cache_build_batch_size must be positive."
         )
+    codec_batch_size = int(
+        args.reset_future_cache_codec_batch_size
+    )
+    if codec_batch_size <= 0:
+        raise ValueError(
+            "reset_future_cache_codec_batch_size must be positive."
+        )
     processed_batches = 0
     for split in args.reset_future_cache_splits:
         dataset = manifest["datasets"][split]
@@ -734,47 +744,66 @@ def build_cache(args) -> None:
             if not rows_to_encode:
                 continue
 
-            reset_parts = []
-            with torch.inference_mode():
-                for part_index, (codec, part_windows) in enumerate(
-                    zip(codecs, windows_by_part)
-                ):
-                    windows = torch.stack(part_windows, dim=0)
-                    encoding = encode_reset_suffix(
-                        codec,
-                        windows,
-                        suffix_start_frame=0,
-                        zero_first_frame_feature_slice=(
-                            (
-                                lower_velocity_start,
-                                lower_velocity_start + 3,
-                            )
-                            if part_index == 1
-                            else None
-                        ),
-                    )
-                    reset_parts.append(encoding.codes)
-            reset_codes = torch.cat(reset_parts, dim=1)
-            expected_shape = (
+            for window_start in range(
+                0,
                 len(rows_to_encode),
-                num_codebooks,
-                manifest["window_tokens"],
-            )
-            if reset_codes.shape != expected_shape:
-                raise RuntimeError(
-                    f"Reset batch shape {tuple(reset_codes.shape)} does not "
-                    f"match {expected_shape}."
+                codec_batch_size,
+            ):
+                window_end = min(
+                    len(rows_to_encode),
+                    window_start + codec_batch_size,
                 )
-            reset_np = (
-                reset_codes.detach().cpu().numpy().astype(np.uint16)
-            )
-            _write_encoded_rows(
-                cache_dir,
-                manifest,
-                rows_to_encode,
-                reset_np,
-            )
-            pending.difference_update(rows_to_encode)
+                chunk_rows = rows_to_encode[
+                    window_start:window_end
+                ]
+                reset_parts = []
+                with torch.inference_mode():
+                    for part_index, (codec, part_windows) in enumerate(
+                        zip(codecs, windows_by_part)
+                    ):
+                        windows = torch.stack(
+                            part_windows[window_start:window_end],
+                            dim=0,
+                        )
+                        encoding = encode_reset_suffix(
+                            codec,
+                            windows,
+                            suffix_start_frame=0,
+                            zero_first_frame_feature_slice=(
+                                (
+                                    lower_velocity_start,
+                                    lower_velocity_start + 3,
+                                )
+                                if part_index == 1
+                                else None
+                            ),
+                        )
+                        reset_parts.append(encoding.codes)
+                reset_codes = torch.cat(reset_parts, dim=1)
+                expected_shape = (
+                    len(chunk_rows),
+                    num_codebooks,
+                    manifest["window_tokens"],
+                )
+                if reset_codes.shape != expected_shape:
+                    raise RuntimeError(
+                        "Reset batch shape "
+                        f"{tuple(reset_codes.shape)} does not match "
+                        f"{expected_shape}."
+                    )
+                reset_np = (
+                    reset_codes.detach()
+                    .cpu()
+                    .numpy()
+                    .astype(np.uint16)
+                )
+                _write_encoded_rows(
+                    cache_dir,
+                    manifest,
+                    chunk_rows,
+                    reset_np,
+                )
+                pending.difference_update(chunk_rows)
             processed_batches += 1
             if (
                 args.reset_future_cache_max_batches is not None

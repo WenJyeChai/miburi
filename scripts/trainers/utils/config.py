@@ -485,6 +485,16 @@ def parse_args():
         ),
     )
     parser.add(
+        "--reset_future_cache_codec_batch_size",
+        default=128,
+        type=int,
+        help=(
+            "Maximum independent reset windows in one offline codec "
+            "forward pass. This bounds GPU activation memory separately "
+            "from source clips per DataLoader batch."
+        ),
+    )
+    parser.add(
         "--reset_future_cache_build_workers",
         default=4,
         type=int,
