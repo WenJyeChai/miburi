@@ -2,11 +2,11 @@
 #
 # This keeps the existing T1 full-condition teacher architecture and selected-
 # frame objective. History/labels come from the intact full-clip encoding, the
-# target plus 400 ms guard is masked, and every upper/lower/face future token
-# is re-encoded from the globally preprocessed raw-motion suffix with no live
-# codec streaming state. The first lower-body suffix velocity is zeroed so no
-# derivative crosses the protected interval.
-project_name: gtdm3_resetfuture400ms_fullcondition_oneq0_beatx_bf16
+# target plus 400 ms guard is masked, and the revealed 16-token upper/lower/
+# face future window is re-encoded from globally preprocessed raw motion with
+# no live codec streaming state. The first lower-body window velocity is
+# zeroed so no derivative crosses the protected interval.
+project_name: gtdm3_resetfuture400ms_h16_t8_fullcondition_oneq0_beatx_bf16
 
 is_train: True
 ddp: False
@@ -50,12 +50,25 @@ gestureformer_depformer_heads: 1
 # 10 motion frames / 25 FPS = 400 ms = five gesture tokens.
 future_gesture_horizon_frames: 10
 future_motion_mode: reset
-# Zero means "encode the remaining aligned suffix", exactly matching the
-# amount of future available to the current T1 intact-future teacher.
-future_window_ms: 0
+# Fixed 16-token / 32-frame / 1.28-second revealed future pilot.
+future_window_ms: 1280
 future_segment_embedding: False
 # Primary experiment. Change only this value to 1 for the boundary ablation.
 reset_prefix_drop_tokens: 0
+
+# Offline fixed-manifest reset-token cache. Each 10-second clip has eight
+# reproducible target positions; one is selected per training epoch and all
+# eight are cycled over time. Prefix-drop is applied at training time, so the
+# same cache supports both the 0- and 1-token boundary experiments.
+reset_future_cache_dir: datasets/data_cache/beatx/reset_future_h16_t8_seed2342
+reset_future_cache_mode: required
+reset_future_targets_per_clip: 8
+reset_future_manifest_seed: 2342
+reset_future_cache_splits: [train, val]
+reset_future_cache_shard_targets: 8192
+reset_future_cache_build_batch_size: 8
+reset_future_cache_build_workers: 4
+reset_future_cache_compression: gzip
 
 transformer_layers: 8
 convblock_layers: 2

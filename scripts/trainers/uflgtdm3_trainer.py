@@ -849,6 +849,7 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                     in_tar_pose_lower,
                     in_tar_pose_face,
                 ),
+                sample_ids=dict_data.get("filechunk_id"),
             )
             
             # breakpoint() # check the mask
@@ -1510,6 +1511,7 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                         in_tar_pose_lower,
                         in_tar_pose_face,
                     ),
+                    sample_ids=dict_data.get("filechunk_id"),
                 )
 
                 # breakpoint() # check the mask

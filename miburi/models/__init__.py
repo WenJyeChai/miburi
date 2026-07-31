@@ -32,6 +32,7 @@ from .gesture_lm_reset_future import (
     ResetFutureBoundary,
     ResetSuffixEncoding,
     build_reset_future_teacher_inputs,
+    build_reset_future_teacher_inputs_from_codes,
     encode_intact_motion,
     encode_reset_suffix,
 )

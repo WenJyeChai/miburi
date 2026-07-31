@@ -68,11 +68,11 @@ def _encode_fresh_segment(
     codec: GestureMimiCodec,
     motion_segment: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Encode one ``[1,F,D]`` segment without creating persistent state."""
+    """Encode a same-length ``[B,F,D]`` batch without persistent state."""
 
-    if motion_segment.dim() != 3 or motion_segment.shape[0] != 1:
+    if motion_segment.dim() != 3 or motion_segment.shape[0] <= 0:
         raise ValueError(
-            "Fresh segment encoding expects one sample [1,F,D], got "
+            "Fresh segment encoding expects a non-empty [B,F,D] batch, got "
             f"{tuple(motion_segment.shape)}."
         )
     if motion_segment.shape[1] <= 0:
@@ -129,11 +129,8 @@ def encode_reset_suffix(
             "Expected globally preprocessed motion [B,F,D], got "
             f"{tuple(preprocessed_motion.shape)}."
         )
-    if preprocessed_motion.shape[0] != 1:
-        raise ValueError(
-            "Reset suffixes are encoded independently; pass exactly one "
-            f"sample, got batch={preprocessed_motion.shape[0]}."
-        )
+    if preprocessed_motion.shape[0] <= 0:
+        raise ValueError("Reset suffix encoding received an empty batch.")
     frame_size = int(codec.frame_size)
     if frame_size <= 0:
         raise ValueError(f"Invalid codec frame size {frame_size}.")
@@ -200,6 +197,155 @@ def encode_reset_suffix(
         suffix_start_token=suffix_start_frame // frame_size,
         valid_token_mask=valid,
     )
+
+
+def build_reset_future_teacher_inputs_from_codes(
+    input_codes: torch.Tensor,
+    target_codes: torch.Tensor,
+    target_times: torch.Tensor,
+    *,
+    reset_code_windows: Sequence[torch.Tensor],
+    horizon_tokens: int,
+    past_context_tokens: int,
+    mask_token_id: int,
+    motion_fps: int,
+    frame_size: int,
+    reset_prefix_drop_tokens: int = 0,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    list[ResetFutureBoundary],
+]:
+    """Insert independently encoded fixed reset windows into teacher inputs."""
+
+    if input_codes.shape != target_codes.shape or input_codes.dim() != 3:
+        raise ValueError(
+            "Expected matching input/target codes [B,K,T], got "
+            f"{tuple(input_codes.shape)} and {tuple(target_codes.shape)}."
+        )
+    batch, codebooks, steps = target_codes.shape
+    if target_times.shape != (batch,):
+        raise ValueError(
+            f"Expected target_times shape {(batch,)}, got "
+            f"{tuple(target_times.shape)}."
+        )
+    if len(reset_code_windows) != batch:
+        raise ValueError(
+            f"Expected {batch} reset windows, got "
+            f"{len(reset_code_windows)}."
+        )
+    if horizon_tokens <= 0 or frame_size <= 0 or motion_fps <= 0:
+        raise ValueError(
+            "horizon_tokens, frame_size, and motion_fps must be positive."
+        )
+    if reset_prefix_drop_tokens < 0:
+        raise ValueError("reset_prefix_drop_tokens cannot be negative.")
+
+    temporal_codes = build_masked_future_gesture_inputs(
+        input_codes,
+        target_codes,
+        target_times,
+        horizon_tokens=horizon_tokens,
+        past_context_tokens=past_context_tokens,
+        mask_token_id=mask_token_id,
+    )
+    reset_future_valid = torch.zeros(
+        batch,
+        steps,
+        device=target_codes.device,
+        dtype=torch.bool,
+    )
+    boundaries = []
+    for batch_index, (target_time_tensor, reset_window) in enumerate(
+        zip(target_times, reset_code_windows)
+    ):
+        target_token = int(target_time_tensor.item())
+        suffix_start_token = target_token + horizon_tokens
+        if reset_window.dim() == 3 and reset_window.shape[0] == 1:
+            reset_window = reset_window[0]
+        if reset_window.dim() != 2:
+            raise ValueError(
+                "Each cached reset window must be [K,H], got "
+                f"{tuple(reset_window.shape)}."
+            )
+        if reset_window.shape[0] != codebooks:
+            raise ValueError(
+                f"Reset window has K={reset_window.shape[0]}, expected "
+                f"{codebooks}."
+            )
+        encoded_tokens = min(
+            int(reset_window.shape[-1]),
+            steps - suffix_start_token,
+        )
+        if encoded_tokens <= reset_prefix_drop_tokens:
+            raise ValueError(
+                "Reset window has no visible token after the configured "
+                "prefix drop."
+            )
+        suffix_end_token = suffix_start_token + encoded_tokens
+        reset_codes = reset_window[
+            :,
+            :encoded_tokens,
+        ].to(
+            device=target_codes.device,
+            dtype=target_codes.dtype,
+        )
+
+        # Mask the complete future first so no intact token survives outside
+        # the fixed reset window.
+        temporal_codes[
+            batch_index,
+            :,
+            suffix_start_token:,
+        ] = mask_token_id
+        original_valid = (
+            target_codes[
+                batch_index,
+                :,
+                suffix_start_token:suffix_end_token,
+            ]
+            != mask_token_id
+        )
+        temporal_codes[
+            batch_index,
+            :,
+            suffix_start_token:suffix_end_token,
+        ] = torch.where(
+            original_valid,
+            reset_codes,
+            torch.full_like(reset_codes, mask_token_id),
+        )
+        if reset_prefix_drop_tokens:
+            temporal_codes[
+                batch_index,
+                :,
+                suffix_start_token:
+                suffix_start_token + reset_prefix_drop_tokens,
+            ] = mask_token_id
+
+        valid = original_valid.any(dim=0)
+        valid[:reset_prefix_drop_tokens] = False
+        reset_future_valid[
+            batch_index,
+            suffix_start_token:suffix_end_token,
+        ] = valid
+        boundaries.append(
+            ResetFutureBoundary(
+                target_token=target_token,
+                target_frame=target_token * frame_size,
+                suffix_start_token=suffix_start_token,
+                suffix_start_frame=suffix_start_token * frame_size,
+                encoded_tokens=encoded_tokens,
+                visible_tokens=int(valid.sum().item()),
+                offset_ms=(
+                    horizon_tokens
+                    * frame_size
+                    * 1000.0
+                    / motion_fps
+                ),
+            )
+        )
+    return temporal_codes, reset_future_valid, boundaries
 
 
 def build_reset_future_teacher_inputs(

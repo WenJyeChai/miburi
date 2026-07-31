@@ -2,9 +2,9 @@
 
 T0 and T1 already exist as the released causal trainer and the masked
 full-condition future trainer.  This T2 trainer keeps T1's architecture,
-initialization, target schedule, and selected-frame objective, but replaces
-every intact future upper/lower/face token with a fresh encoding of the
-globally preprocessed raw-motion suffix.
+initialization policy, and selected-frame objective, but replaces every intact
+future upper/lower/face token with a fresh encoding of a globally preprocessed
+raw-motion window. The fixed-cache pilot uses a reproducible target manifest.
 """
 
 from __future__ import annotations
@@ -14,6 +14,10 @@ from loguru import logger
 from miburi.models import (
     GTemporalDepthModel3FutureGestureFullCondition,
     build_reset_future_teacher_inputs,
+    build_reset_future_teacher_inputs_from_codes,
+)
+from .dataloaders.utils.reset_future_cache import (
+    ResetFutureManifestCache,
 )
 
 from .uflgtdm3_future_gesture_trainer import (
@@ -61,6 +65,7 @@ class UpperFaceLowerGTDM3ResetFutureTrainer(
                 f"{frame_size}."
             )
         self.maximum_reset_suffix_frames = None
+        self.reset_future_window_tokens = None
         future_window_ms = float(args.future_window_ms)
         if future_window_ms < 0:
             raise ValueError("future_window_ms cannot be negative.")
@@ -83,9 +88,11 @@ class UpperFaceLowerGTDM3ResetFutureTrainer(
                     f"{frame_size}-frame gesture-token boundary."
                 )
             self.maximum_reset_suffix_frames = int(rounded_frames)
+            self.reset_future_window_tokens = (
+                self.maximum_reset_suffix_frames // frame_size
+            )
             visible_window_tokens = (
-                self.maximum_reset_suffix_frames
-                // int(self.upper_gesture_codec.frame_size)
+                self.reset_future_window_tokens
                 - self.reset_prefix_drop_tokens
             )
             if visible_window_tokens <= 0:
@@ -108,8 +115,64 @@ class UpperFaceLowerGTDM3ResetFutureTrainer(
             velocity_start + 3,
         )
         self._logged_reset_boundaries: set[str] = set()
+        self._logged_cache_fallback = False
         self._last_reset_future_valid_mask = None
         self._last_reset_future_boundaries = None
+        self.reset_future_cache_mode = str(
+            args.reset_future_cache_mode
+        )
+        self.reset_future_cache = None
+        if self.reset_future_cache_mode != "off":
+            if self.reset_future_window_tokens is None:
+                raise ValueError(
+                    "Cached T2 training requires a fixed positive "
+                    "future_window_ms."
+                )
+            if not args.reset_future_cache_dir:
+                if self.reset_future_cache_mode == "required":
+                    raise ValueError(
+                        "reset_future_cache_mode=required needs "
+                        "reset_future_cache_dir."
+                    )
+                logger.warning(
+                    "Reset cache mode=prefer but no cache directory was "
+                    "configured; falling back to online encoding."
+                )
+            else:
+                cardinalities = {
+                    int(codec.cardinality)
+                    for codec in (
+                        self.upper_gesture_codec,
+                        self.lower_gesture_codec,
+                        self.face_gesture_codec,
+                    )
+                }
+                if len(cardinalities) != 1:
+                    raise RuntimeError(
+                        "Gesture codec cardinalities do not match."
+                    )
+                try:
+                    self.reset_future_cache = ResetFutureManifestCache(
+                        args.reset_future_cache_dir,
+                        args=args,
+                        expected_codebooks=sum(
+                            int(codec.num_codebooks)
+                            for codec in (
+                                self.upper_gesture_codec,
+                                self.lower_gesture_codec,
+                                self.face_gesture_codec,
+                            )
+                        ),
+                        expected_cardinality=cardinalities.pop(),
+                        require_complete=True,
+                    )
+                except Exception:
+                    if self.reset_future_cache_mode == "required":
+                        raise
+                    logger.exception(
+                        "Reset cache could not be opened; mode=prefer will "
+                        "use online fixed-window encoding."
+                    )
 
         suffix_description = (
             "remaining aligned clip"
@@ -122,11 +185,35 @@ class UpperFaceLowerGTDM3ResetFutureTrainer(
             f"prefix_drop={self.reset_prefix_drop_tokens} tokens; "
             "segment_embedding=False; lower boundary velocity is zeroed."
         )
+        if self.reset_future_cache is not None:
+            logger.info(
+                f"[GPU{self.global_rank}:{self.local_rank}] T2 fixed "
+                f"manifest cache loaded from "
+                f"{args.reset_future_cache_dir}; targets/clip="
+                f"{args.reset_future_targets_per_clip}; window="
+                f"{self.reset_future_window_tokens} tokens."
+            )
 
     def minimum_future_anchor_tokens(self):
+        if self.reset_future_window_tokens is not None:
+            return (
+                self.future_horizon_tokens
+                + self.reset_future_window_tokens
+                - 1
+            )
         return (
             self.future_horizon_tokens
             + self.reset_prefix_drop_tokens
+        )
+
+    def visible_future_offset_seconds(self):
+        return (
+            (
+                self.future_horizon_tokens
+                + self.reset_prefix_drop_tokens
+            )
+            * self.args.frame_chunk_size
+            / self.args.motion_fps
         )
 
     def _build_reset_temporal_codes(
@@ -135,33 +222,55 @@ class UpperFaceLowerGTDM3ResetFutureTrainer(
         target_codes,
         target_times,
         codec_motion_inputs,
+        *,
+        reset_code_windows=None,
     ):
-        temporal_codes, valid_mask, boundaries = (
-            build_reset_future_teacher_inputs(
-                input_codes,
-                target_codes,
-                target_times,
-                codec_motion_inputs=codec_motion_inputs,
-                gesture_codecs=(
-                    self.upper_gesture_codec,
-                    self.lower_gesture_codec,
-                    self.face_gesture_codec,
-                ),
-                horizon_tokens=self.future_horizon_tokens,
-                past_context_tokens=self.past_context_tokens,
-                mask_token_id=self.modelout_ignore_index,
-                motion_fps=int(self.args.motion_fps),
-                reset_prefix_drop_tokens=(
-                    self.reset_prefix_drop_tokens
-                ),
-                maximum_suffix_frames=(
-                    self.maximum_reset_suffix_frames
-                ),
-                lower_velocity_feature_slice=(
-                    self.lower_velocity_feature_slice
-                ),
+        if reset_code_windows is None:
+            temporal_codes, valid_mask, boundaries = (
+                build_reset_future_teacher_inputs(
+                    input_codes,
+                    target_codes,
+                    target_times,
+                    codec_motion_inputs=codec_motion_inputs,
+                    gesture_codecs=(
+                        self.upper_gesture_codec,
+                        self.lower_gesture_codec,
+                        self.face_gesture_codec,
+                    ),
+                    horizon_tokens=self.future_horizon_tokens,
+                    past_context_tokens=self.past_context_tokens,
+                    mask_token_id=self.modelout_ignore_index,
+                    motion_fps=int(self.args.motion_fps),
+                    reset_prefix_drop_tokens=(
+                        self.reset_prefix_drop_tokens
+                    ),
+                    maximum_suffix_frames=(
+                        self.maximum_reset_suffix_frames
+                    ),
+                    lower_velocity_feature_slice=(
+                        self.lower_velocity_feature_slice
+                    ),
+                )
             )
-        )
+        else:
+            temporal_codes, valid_mask, boundaries = (
+                build_reset_future_teacher_inputs_from_codes(
+                    input_codes,
+                    target_codes,
+                    target_times,
+                    reset_code_windows=reset_code_windows,
+                    horizon_tokens=self.future_horizon_tokens,
+                    past_context_tokens=self.past_context_tokens,
+                    mask_token_id=self.modelout_ignore_index,
+                    motion_fps=int(self.args.motion_fps),
+                    frame_size=int(
+                        self.upper_gesture_codec.frame_size
+                    ),
+                    reset_prefix_drop_tokens=(
+                        self.reset_prefix_drop_tokens
+                    ),
+                )
+            )
         self._last_reset_future_valid_mask = valid_mask.detach()
         self._last_reset_future_boundaries = boundaries
         return temporal_codes
@@ -198,27 +307,87 @@ class UpperFaceLowerGTDM3ResetFutureTrainer(
             "codec_motion_inputs",
             None,
         )
+        sample_ids = batch_context.pop("sample_ids", None)
         if batch_context:
             raise ValueError(
                 "Unexpected reset-future batch context: "
                 + ", ".join(sorted(batch_context))
             )
-        if codec_motion_inputs is None:
+        if (
+            codec_motion_inputs is None
+            and self.reset_future_cache is None
+        ):
             raise RuntimeError(
                 "T2 reset-future training requires globally preprocessed "
                 "upper/lower/face codec motion inputs."
             )
-        target_times = self._select_target_times(
-            token_loss_mask,
-            split,
-            epoch,
-            iteration,
+        reset_code_windows = None
+        if self.reset_future_cache is not None:
+            if sample_ids is None:
+                raise RuntimeError(
+                    "Cached T2 training requires filechunk_id sample keys."
+                )
+            try:
+                target_times, cached_windows = (
+                    self.reset_future_cache.load_batch(
+                        sample_ids,
+                        split=split,
+                        epoch=epoch,
+                    )
+                )
+                target_times = target_times.to(
+                    token_loss_mask.device
+                )
+                reset_code_windows = [
+                    window.codes[
+                        :,
+                        :window.valid_future_tokens,
+                    ]
+                    for window in cached_windows
+                ]
+            except Exception:
+                if self.reset_future_cache_mode == "required":
+                    raise
+                if not self._logged_cache_fallback:
+                    logger.exception(
+                        "Reset cache lookup failed; mode=prefer is falling "
+                        "back to online fixed-window encoding."
+                    )
+                    self._logged_cache_fallback = True
+                target_times = self._select_target_times(
+                    token_loss_mask,
+                    split,
+                    epoch,
+                    iteration,
+                )
+        else:
+            target_times = self._select_target_times(
+                token_loss_mask,
+                split,
+                epoch,
+                iteration,
+            )
+        valid_lengths = token_loss_mask[:, 0].sum(dim=-1).long()
+        required_ends = (
+            target_times
+            + self.future_horizon_tokens
+            + (
+                self.reset_future_window_tokens
+                if self.reset_future_window_tokens is not None
+                else 1
+            )
         )
+        if (required_ends > valid_lengths).any():
+            raise RuntimeError(
+                "Fixed reset target/window exceeds a valid gesture "
+                "sequence."
+            )
         temporal_codes = self._build_reset_temporal_codes(
             input_codes,
             target_codes,
             target_times,
             codec_motion_inputs,
+            reset_code_windows=reset_code_windows,
         )
         selected_loss_mask = self._target_only_loss_mask(
             token_loss_mask,

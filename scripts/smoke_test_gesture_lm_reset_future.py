@@ -11,6 +11,7 @@ import torch
 
 from miburi.models.gesture_lm_reset_future import (
     build_reset_future_teacher_inputs,
+    build_reset_future_teacher_inputs_from_codes,
     encode_reset_suffix,
 )
 
@@ -148,6 +149,35 @@ def test_future_sensitivity_and_cache_contamination():
     )
 
 
+def test_fixed_window_batch_matches_individual_resets():
+    codec = _DeterministicFreshCodec(num_codebooks=2)
+    motion = _motion(batch=3, frames=12)
+    batched = encode_reset_suffix(
+        codec,
+        motion,
+        suffix_start_frame=0,
+        maximum_suffix_frames=8,
+    )
+    assert batched.codes.shape == (3, 2, 4)
+    for sample_index in range(motion.shape[0]):
+        individual = encode_reset_suffix(
+            codec,
+            motion[sample_index:sample_index + 1],
+            suffix_start_frame=0,
+            maximum_suffix_frames=8,
+        )
+        torch.testing.assert_close(
+            batched.codes[sample_index:sample_index + 1],
+            individual.codes,
+        )
+        torch.testing.assert_close(
+            batched.prequantized_latent[
+                sample_index:sample_index + 1
+            ],
+            individual.prequantized_latent,
+        )
+
+
 def test_active_streaming_state_is_rejected():
     codec = _DeterministicFreshCodec(num_codebooks=2)
     codec.active_state = object()
@@ -283,15 +313,80 @@ def test_reset_prefix_drop_masks_first_future_token():
     assert valid[:, start + 1:].any()
 
 
+def test_cached_fixed_window_matches_online_construction():
+    codecs = (
+        _DeterministicFreshCodec(2),
+        _DeterministicFreshCodec(2),
+        _DeterministicFreshCodec(1),
+    )
+    motions = (
+        _motion(batch=2, features=8),
+        _motion(batch=2, features=8) + 0.1,
+        _motion(batch=2, features=8) + 0.2,
+    )
+    intact = torch.zeros(2, 5, 8, dtype=torch.long)
+    targets = torch.tensor([1, 2])
+    online, online_valid, _ = build_reset_future_teacher_inputs(
+        intact,
+        intact,
+        targets,
+        codec_motion_inputs=motions,
+        gesture_codecs=codecs,
+        horizon_tokens=2,
+        past_context_tokens=3,
+        mask_token_id=31,
+        motion_fps=25,
+        maximum_suffix_frames=4,
+        lower_velocity_feature_slice=(1, 4),
+    )
+
+    reset_windows = []
+    for sample_index, target in enumerate(targets.tolist()):
+        start_frame = (target + 2) * 2
+        parts = []
+        for part_index, (codec, motion) in enumerate(
+            zip(codecs, motions)
+        ):
+            parts.append(
+                encode_reset_suffix(
+                    codec,
+                    motion[sample_index:sample_index + 1],
+                    suffix_start_frame=start_frame,
+                    maximum_suffix_frames=4,
+                    zero_first_frame_feature_slice=(
+                        (1, 4) if part_index == 1 else None
+                    ),
+                ).codes[0]
+            )
+        reset_windows.append(torch.cat(parts, dim=0))
+
+    cached, cached_valid, _ = (
+        build_reset_future_teacher_inputs_from_codes(
+            intact,
+            intact,
+            targets,
+            reset_code_windows=reset_windows,
+            horizon_tokens=2,
+            past_context_tokens=3,
+            mask_token_id=31,
+            motion_fps=25,
+            frame_size=2,
+        )
+    )
+    torch.testing.assert_close(cached, online)
+    torch.testing.assert_close(cached_valid, online_valid)
+
+
 if __name__ == "__main__":
     test_hidden_interval_and_past_invariance()
     test_future_sensitivity_and_cache_contamination()
+    test_fixed_window_batch_matches_individual_resets()
     test_active_streaming_state_is_rejected()
     test_lower_boundary_velocity_is_internal_to_suffix()
     test_all_body_parts_are_reset_and_boundaries_align()
     test_reset_prefix_drop_masks_first_future_token()
+    test_cached_fixed_window_matches_online_construction()
     print(
         "Reset-future smoke tests passed "
-        "(invariance/sensitivity/cache/boundary/all-part replacement)."
+        "(invariance/sensitivity/batched reset/cache/boundary/all parts)."
     )
-

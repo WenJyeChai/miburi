@@ -280,19 +280,36 @@ The causal GTDM3 trainer is the T0 control. The existing masked full-condition
 teacher is T1: it hides the target plus a 400 ms guard, then exposes future
 tokens from the intact full-clip codec encoding.
 
-T2 uses the same teacher architecture, target schedule, audio/text condition,
-and selected-frame objective, but replaces every upper/lower/face future token
-with an independent encoding of the globally preprocessed raw-motion suffix:
+T2 uses the same teacher architecture, audio/text condition, and selected-frame
+objective, but replaces the revealed upper/lower/face future window with an
+independent encoding of globally preprocessed raw motion:
 
 ```bash
-python scripts/train.py \
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 \
+python scripts/build_reset_future_cache.py \
     --config configs/gtdm3_resetfuture_fullcondition_oneq0_beatx_allspk.yaml
+
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 \
+python scripts/train.py \
+    --config configs/gtdm3_resetfuture_fullcondition_oneq0_beatx_allspk.yaml \
+    --wandb True --wandb_mode online
 ```
 
-The primary T2 config keeps the remaining suffix to match T1 and retains the
-first reset token. Set `--reset_prefix_drop_tokens 1` for the immediate
-boundary-artifact ablation. A learned reset-segment embedding is intentionally
-disabled in this first architecture-matched comparison.
+The primary cache pilot uses eight fixed uniformly sampled targets per
+10-second clip and a 16-token (1.28-second) future window. The builder batches
+all fixed-length raw windows through each non-streaming causal codec, writes
+only `uint16` RVQ indices to sharded HDF5 files, and can resume incomplete
+shards. Training chooses one manifest target per clip per epoch and cycles all
+eight targets without rerunning the codecs.
+
+The first reset token remains visible. Set `--reset_prefix_drop_tokens 1` for
+the immediate boundary-artifact ablation; this does not require rebuilding the
+cache. A learned reset-segment embedding is intentionally disabled in this
+first architecture-matched comparison.
+
+The existing T1 run reveals the remaining intact suffix rather than this fixed
+16-token window. Treat it as a historical baseline. A controlled T1/T2
+comparison must use the same target manifest and fixed future window.
 
 Before launching a checkpoint run, execute the focused information-boundary
 checks:
@@ -301,7 +318,7 @@ checks:
 python scripts/smoke_test_gesture_lm_reset_future.py
 ```
 
-These verify past/hidden-interval invariance, future sensitivity, cache
+These verify past/hidden-interval invariance, future sensitivity, codec-state
 isolation, frame/token boundary alignment, lower-velocity boundary handling,
 and replacement of all three body-part streams.
 

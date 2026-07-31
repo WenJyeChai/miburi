@@ -430,6 +430,88 @@ def parse_args():
             "artifact ablation."
         ),
     )
+    parser.add(
+        "--reset_future_cache_dir",
+        default=None,
+        type=str,
+        help=(
+            "Directory containing metadata.json, target_manifest.h5, and "
+            "sharded fixed-window reset-code HDF5 files."
+        ),
+    )
+    parser.add(
+        "--reset_future_cache_mode",
+        default="off",
+        type=str,
+        choices=["off", "prefer", "required"],
+        help=(
+            "Use fixed-manifest reset codes from reset_future_cache_dir. "
+            "prefer falls back to online encoding; required fails on any "
+            "missing or incompatible cache entry."
+        ),
+    )
+    parser.add(
+        "--reset_future_targets_per_clip",
+        default=8,
+        type=int,
+        help="Fixed uniformly sampled manifest targets per source clip.",
+    )
+    parser.add(
+        "--reset_future_manifest_seed",
+        default=2342,
+        type=int,
+        help="Stable per-sequence target-manifest seed.",
+    )
+    parser.add(
+        "--reset_future_cache_splits",
+        default=["train", "val"],
+        type=str,
+        nargs="*",
+        help="Dataset splits included by the reset-cache builder.",
+    )
+    parser.add(
+        "--reset_future_cache_shard_targets",
+        default=8192,
+        type=int,
+        help="Maximum target rows stored in each reset-code HDF5 shard.",
+    )
+    parser.add(
+        "--reset_future_cache_build_batch_size",
+        default=8,
+        type=int,
+        help=(
+            "Source clips per offline cache-build batch. Each clip expands "
+            "to reset_future_targets_per_clip parallel codec windows."
+        ),
+    )
+    parser.add(
+        "--reset_future_cache_build_workers",
+        default=4,
+        type=int,
+        help="DataLoader workers used only by the reset-cache builder.",
+    )
+    parser.add(
+        "--reset_future_cache_compression",
+        default="gzip",
+        type=str,
+        choices=["none", "lzf", "gzip"],
+        help="Compression for compact uint16 reset-code shards.",
+    )
+    parser.add(
+        "--reset_future_cache_rebuild",
+        default=False,
+        type=str2bool,
+        help=(
+            "Acknowledge an intentional cache rebuild. For safety, choose a "
+            "new or empty cache directory."
+        ),
+    )
+    parser.add(
+        "--reset_future_cache_max_batches",
+        default=None,
+        type=int,
+        help="Optional early-stop batch count for a resumability smoke test.",
+    )
 
     parser.add("--num_temp_classifiers", default=2, type=int)
 
