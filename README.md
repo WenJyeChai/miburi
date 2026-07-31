@@ -274,6 +274,37 @@ python scripts/train.py --config configs/gtdm3_audiotext_ufl_25_embody3dbeatx_al
 
 For multi-GPU, wrap any of these in the same `torchrun --standalone --nnodes=1 --nproc-per-node=N` line as above.
 
+#### Experimental future-teacher sequence (T0/T1/T2)
+
+The causal GTDM3 trainer is the T0 control. The existing masked full-condition
+teacher is T1: it hides the target plus a 400 ms guard, then exposes future
+tokens from the intact full-clip codec encoding.
+
+T2 uses the same teacher architecture, target schedule, audio/text condition,
+and selected-frame objective, but replaces every upper/lower/face future token
+with an independent encoding of the globally preprocessed raw-motion suffix:
+
+```bash
+python scripts/train.py \
+    --config configs/gtdm3_resetfuture_fullcondition_oneq0_beatx_allspk.yaml
+```
+
+The primary T2 config keeps the remaining suffix to match T1 and retains the
+first reset token. Set `--reset_prefix_drop_tokens 1` for the immediate
+boundary-artifact ablation. A learned reset-segment embedding is intentionally
+disabled in this first architecture-matched comparison.
+
+Before launching a checkpoint run, execute the focused information-boundary
+checks:
+
+```bash
+python scripts/smoke_test_gesture_lm_reset_future.py
+```
+
+These verify past/hidden-interval invariance, future sensitivity, cache
+isolation, frame/token boundary alignment, lower-velocity boundary handling,
+and replacement of all three body-part streams.
+
 #### Experimental three-q0 global-C2F Gesture LM
 
 The opt-in C2F variant is separate from the released GTDM3 model and config.

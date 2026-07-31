@@ -28,3 +28,10 @@ from .gesture_lm_regret import (
     is_temporal_q0_state_key,
     retain_temporal_q0_only,
 )
+from .gesture_lm_reset_future import (
+    ResetFutureBoundary,
+    ResetSuffixEncoding,
+    build_reset_future_teacher_inputs,
+    encode_intact_motion,
+    encode_reset_suffix,
+)

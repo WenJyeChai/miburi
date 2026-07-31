@@ -33,6 +33,10 @@ _TRAINER_IMPORTS = (
         ".uflgtdm3_regret_trainer",
         "UpperFaceLowerGTDM3RegretTrainer",
     ),
+    (
+        ".uflgtdm3_reset_future_trainer",
+        "UpperFaceLowerGTDM3ResetFutureTrainer",
+    ),
 )
 
 for _module_name, _cls_name in _TRAINER_IMPORTS:

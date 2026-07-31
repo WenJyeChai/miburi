@@ -389,6 +389,47 @@ def parse_args():
             "is 400 ms."
         ),
     )
+    parser.add(
+        "--future_motion_mode",
+        default="intact",
+        type=str,
+        choices=["none", "intact", "reset", "shuffled_reset"],
+        help=(
+            "Future-motion view used by an experimental teacher. Existing "
+            "masked-frame teachers use intact; T2 uses reset. The "
+            "shuffled_reset value is reserved for the future-usage control."
+        ),
+    )
+    parser.add(
+        "--future_window_ms",
+        default=0.0,
+        type=float,
+        help=(
+            "Length of the reset-encoded future window in milliseconds. "
+            "Zero keeps the remaining aligned suffix, matching the current "
+            "T1 intact-future teacher."
+        ),
+    )
+    parser.add(
+        "--future_segment_embedding",
+        default=False,
+        type=str2bool,
+        help=(
+            "Opt-in learned marker for reset-future tokens. Unsupported in "
+            "the first architecture-matched T2 comparison and must remain "
+            "False there."
+        ),
+    )
+    parser.add(
+        "--reset_prefix_drop_tokens",
+        default=0,
+        type=int,
+        help=(
+            "Number of reset-suffix tokens masked at the fresh codec "
+            "boundary. Primary T2 uses 0; use 1 for the immediate boundary "
+            "artifact ablation."
+        ),
+    )
 
     parser.add("--num_temp_classifiers", default=2, type=int)
 

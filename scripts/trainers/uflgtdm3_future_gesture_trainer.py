@@ -166,14 +166,15 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
     ):
         batch = token_loss_mask.shape[0]
         valid_lengths = token_loss_mask[:, 0].sum(dim=-1).long()
+        required_future_tokens = self.minimum_future_anchor_tokens()
         max_target_times = (
-            valid_lengths - self.future_horizon_tokens - 1
+            valid_lengths - required_future_tokens - 1
         )
         if (max_target_times < 0).any():
             raise ValueError(
                 "Sequence is too short for the configured future horizon: "
                 f"valid lengths={valid_lengths.tolist()}, "
-                f"horizon={self.future_horizon_tokens} gesture tokens."
+                f"required future={required_future_tokens} gesture tokens."
             )
 
         if split == "train":
@@ -203,6 +204,18 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
             target_times = hashed % (max_target_times + 1)
         return target_times
 
+    def minimum_future_anchor_tokens(self):
+        """Tokens required after a target for one usable future anchor."""
+
+        return self.future_horizon_tokens
+
+    def visible_future_offset_seconds(self):
+        return (
+            self.minimum_future_anchor_tokens()
+            * self.args.frame_chunk_size
+            / self.args.motion_fps
+        )
+
     @staticmethod
     def _target_only_loss_mask(token_loss_mask, target_times):
         selected = torch.zeros_like(token_loss_mask)
@@ -231,7 +244,9 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
         split,
         epoch,
         iteration,
+        **batch_context,
     ):
+        del batch_context
         target_times = self._select_target_times(
             token_loss_mask,
             split,
@@ -318,6 +333,7 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
         target_times,
         rollout,
         depth_cross_attention_mask,
+        codec_motion_inputs=None,
     ):
         """Predict complete frames for independently masked target times.
 
@@ -337,13 +353,10 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
             -1,
             -1,
         )
-        temporal_codes = build_masked_future_gesture_inputs(
-            expanded_codes,
+        temporal_codes = self.build_oracle_temporal_codes(
             expanded_codes,
             target_times,
-            horizon_tokens=self.future_horizon_tokens,
-            past_context_tokens=self.past_context_tokens,
-            mask_token_id=self.modelout_ignore_index,
+            codec_motion_inputs=codec_motion_inputs,
         )
         temporal_audio = audio_codes.expand(
             target_batch,
@@ -527,6 +540,25 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
             )
         return predicted
 
+    def build_oracle_temporal_codes(
+        self,
+        expanded_codes,
+        target_times,
+        *,
+        codec_motion_inputs=None,
+    ):
+        """Build the teacher view used by oracle target evaluation."""
+
+        del codec_motion_inputs
+        return build_masked_future_gesture_inputs(
+            expanded_codes,
+            expanded_codes,
+            target_times,
+            horizon_tokens=self.future_horizon_tokens,
+            past_context_tokens=self.past_context_tokens,
+            mask_token_id=self.modelout_ignore_index,
+        )
+
     @torch.no_grad()
     def test(
         self,
@@ -569,14 +601,15 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
         logger.warning(
             "ORACLE FUTURE-GESTURE EVALUATION: predictions receive "
             "ground-truth gesture tokens beginning "
-            f"{self.future_horizon_seconds:.3f}s after each target. "
+            f"{self.visible_future_offset_seconds():.3f}s after each target. "
             "Reported oracle FGD is not standalone-generation FGD."
         )
         logger.info(
             f"Oracle mode={mode}; target_batch_size={target_batch_size}; "
             f"CFG={cfg_coef}; audio/text mode="
             f"{self.model.temporal_condition_mode}; final "
-            f"{self.future_horizon_tokens} gesture tokens are excluded."
+            f"{self.minimum_future_anchor_tokens()} gesture tokens are "
+            "excluded."
         )
 
         rollout = GestureLMGen(
@@ -737,11 +770,12 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
                 gesture_codes.shape[-1],
                 condition_gesture_steps,
             )
-            if gesture_steps <= self.future_horizon_tokens:
+            required_future_tokens = self.minimum_future_anchor_tokens()
+            if gesture_steps <= required_future_tokens:
                 raise ValueError(
                     f"Clip {file_name[0]} has only {gesture_steps} aligned "
-                    "gesture tokens, too short for oracle horizon "
-                    f"{self.future_horizon_tokens}."
+                    "gesture tokens, too short for required future "
+                    f"{required_future_tokens}."
                 )
             aligned_condition_steps = (
                 gesture_steps * self.codec_difference
@@ -754,7 +788,7 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
             text_codes = text_codes[:, :, :aligned_condition_steps]
 
             valid_gesture_steps = (
-                gesture_steps - self.future_horizon_tokens
+                gesture_steps - required_future_tokens
             )
             valid_motion_frames = (
                 valid_gesture_steps * self.args.frame_chunk_size
@@ -813,6 +847,24 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
                             target_times,
                             rollout,
                             depth_cross_attention_mask,
+                            codec_motion_inputs=(
+                                torch.cat(
+                                    [upper_6d, hands_6d],
+                                    dim=-1,
+                                )[:, :aligned_motion_frames],
+                                torch.cat(
+                                    [
+                                        lower_6d,
+                                        tar_trans_vel,
+                                        tar_contact,
+                                    ],
+                                    dim=-1,
+                                )[:, :aligned_motion_frames],
+                                torch.cat(
+                                    [face_6d, tar_exps],
+                                    dim=-1,
+                                )[:, :aligned_motion_frames],
+                            ),
                         )
                     )
                 except torch.cuda.OutOfMemoryError as exc:
@@ -1066,8 +1118,11 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
                         predicted=predicted_codes[0].detach().cpu().numpy(),
                         target=target_codes[0].detach().cpu().numpy(),
                         future_horizon_tokens=self.future_horizon_tokens,
+                        required_future_anchor_tokens=(
+                            self.minimum_future_anchor_tokens()
+                        ),
                         excluded_tail_motion_frames=(
-                            self.future_horizon_tokens
+                            self.minimum_future_anchor_tokens()
                             * self.args.frame_chunk_size
                         ),
                     )
@@ -1152,7 +1207,7 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
             logger.info(
                 f"Oracle clip {file_name[0]}: predicted "
                 f"{valid_gesture_steps} gesture frames; excluded final "
-                f"{self.future_horizon_tokens}."
+                f"{self.minimum_future_anchor_tokens()}."
             )
 
         elapsed = time.time() - start_time
@@ -1179,8 +1234,12 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
         oracle_metrics["oracle_future_horizon_seconds"] = float(
             self.future_horizon_seconds
         )
+        oracle_metrics["oracle_visible_future_offset_seconds"] = float(
+            self.visible_future_offset_seconds()
+        )
         oracle_metrics["oracle_excluded_tail_frames_per_clip"] = float(
-            self.future_horizon_tokens * self.args.frame_chunk_size
+            self.minimum_future_anchor_tokens()
+            * self.args.frame_chunk_size
         )
         if motion_seconds > 0:
             oracle_metrics["oracle_realtime_factor"] = float(

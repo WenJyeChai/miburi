@@ -62,6 +62,9 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 "vad_loss",
                 "temporal_q0_ce",
                 "temporal_q0_acc",
+                "temporal_q0_top5_acc",
+                "temporal_q0_gt_prob",
+                "temporal_q0_entropy",
             ],
             [
                 False,
@@ -83,6 +86,9 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 False,
                 False,
                 True,
+                True,
+                True,
+                False,
             ],
         )
 
@@ -203,6 +209,7 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
         split,
         epoch,
         iteration,
+        **batch_context,
     ):
         """Extension point for privileged teacher input/loss masks.
 
@@ -210,6 +217,7 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
         separate temporal input, preserving the original model and objective.
         """
 
+        del batch_context
         return (
             None,
             audio_codes,
@@ -303,6 +311,32 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
         q0_accuracy = (
             q0_prediction[q0_valid] == q0_targets[q0_valid]
         ).float().mean()
+        real_q0_logits = q0_logits[
+            ...,
+            : self.modelout_ignore_index,
+        ]
+        real_q0_probs = F.softmax(
+            real_q0_logits.float(),
+            dim=-1,
+        )
+        top_k = min(5, real_q0_logits.shape[-1])
+        q0_top5 = real_q0_logits.topk(
+            top_k,
+            dim=-1,
+        ).indices
+        valid_q0_targets = q0_targets[q0_valid]
+        q0_top5_accuracy = (
+            q0_top5[q0_valid]
+            == valid_q0_targets.unsqueeze(-1)
+        ).any(dim=-1).float().mean()
+        q0_gt_probability = real_q0_probs[q0_valid].gather(
+            -1,
+            valid_q0_targets.unsqueeze(-1),
+        ).squeeze(-1).mean()
+        q0_entropy = -(
+            real_q0_probs
+            * real_q0_probs.clamp_min(1e-12).log()
+        ).sum(dim=-1)[q0_valid].mean()
         self.tracker.update_meter(
             "temporal_q0_ce",
             split,
@@ -312,6 +346,21 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
             "temporal_q0_acc",
             split,
             q0_accuracy.item(),
+        )
+        self.tracker.update_meter(
+            "temporal_q0_top5_acc",
+            split,
+            q0_top5_accuracy.item(),
+        )
+        self.tracker.update_meter(
+            "temporal_q0_gt_prob",
+            split,
+            q0_gt_probability.item(),
+        )
+        self.tracker.update_meter(
+            "temporal_q0_entropy",
+            split,
+            q0_entropy.item(),
         )
     
     def process_conditions(self, audio_codes, text_codes):
@@ -795,6 +844,11 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 split="train",
                 epoch=epoch,
                 iteration=its,
+                codec_motion_inputs=(
+                    in_tar_pose_upper,
+                    in_tar_pose_lower,
+                    in_tar_pose_face,
+                ),
             )
             
             # breakpoint() # check the mask
@@ -1451,6 +1505,11 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                     split="val",
                     epoch=epoch,
                     iteration=its,
+                    codec_motion_inputs=(
+                        in_tar_pose_upper,
+                        in_tar_pose_lower,
+                        in_tar_pose_face,
+                    ),
                 )
 
                 # breakpoint() # check the mask
