@@ -285,14 +285,16 @@ objective, but replaces the revealed upper/lower/face future window with an
 independent encoding of globally preprocessed raw motion:
 
 ```bash
+# Four-speaker good-speaker pilot: build the reset-code cache first.
 CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 \
 python scripts/build_reset_future_cache.py \
-    --config configs/gtdm3_resetfuture_fullcondition_oneq0_beatx_allspk.yaml
+    --config configs/gtdm3_resetfuture_fullcondition_oneq0_beatx_small.yaml
 
 CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 \
 python scripts/train.py \
-    --config configs/gtdm3_resetfuture_fullcondition_oneq0_beatx_allspk.yaml \
-    --wandb True --wandb_mode online
+    --config configs/gtdm3_resetfuture_fullcondition_oneq0_beatx_small.yaml \
+    --wandb True --wandb_mode online \
+    --wandb_project miburi --wandb_group t2-reset-future-goodspk
 ```
 
 The primary cache pilot uses eight fixed uniformly sampled targets per
@@ -300,7 +302,11 @@ The primary cache pilot uses eight fixed uniformly sampled targets per
 all fixed-length raw windows through each non-streaming causal codec, writes
 only `uint16` RVQ indices to sharded HDF5 files, and can resume incomplete
 shards. Training chooses one manifest target per clip per epoch and cycles all
-eight targets without rerunning the codecs.
+eight targets without rerunning the codecs. In the small-set config, the
+training batch size is 128 clips, while each cache-build pass uses 16 clips
+times eight targets = 128 independent reset windows. The all-speaker config
+remains available as
+`configs/gtdm3_resetfuture_fullcondition_oneq0_beatx_allspk.yaml`.
 
 The first reset token remains visible. Set `--reset_prefix_drop_tokens 1` for
 the immediate boundary-artifact ablation; this does not require rebuilding the

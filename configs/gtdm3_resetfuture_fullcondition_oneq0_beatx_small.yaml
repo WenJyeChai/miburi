@@ -1,0 +1,115 @@
+# T2 raw reset-suffix future teacher on the four-speaker BEATX pilot set.
+#
+# The dataset and codec checkpoints match the repository's established
+# good-speaker experiment: Wayne, Lawrence, Stewart, and Solomon, restricted
+# to clips with valid lower-body motion.
+project_name: gtdm3_resetfuture400ms_h16_t8_fullcondition_oneq0_goodspk_beatx_bf16
+
+is_train: True
+ddp: False
+beatx_data_path: datasets/beat_english_v2.0.0/
+embody3d_path: datasets/embody_3d_aiagent/
+
+deps_path: assets_dep/
+
+cache_path: datasets/data_cache/embody3d_dyadic/database.hdf5
+beatx_cache_path: datasets/data_cache/beatx/database.hdf5
+embody3d_cache_path: datasets/data_cache/embody3d_dyadic/database.hdf5
+
+# Use the codecs trained for the same good-speaker subset.
+lowerbodycodec_ckpt: experiments/demoexp_release_lowercodec/last_440.safetensors
+upperbodycodec_ckpt: experiments/demoexp_release_uppercodec/last_180.safetensors
+facecodec_ckpt: experiments/demoexp_release_facecodec/last_100.safetensors
+
+is_continue: False
+
+out_path: ./experiments/
+dataset: unified
+pose_norm: False
+body_part: full
+
+motion_fps: 25
+lowertrans_nfeats: 61
+upperlower_nfeats: 258
+face_nfeats: 106
+
+random_seed: 2342
+
+pose_length: 250
+frame_chunk_size: 2
+audio_sr: 24000
+audio_fps: 24000
+
+gestureformer_layers: 4
+gestureformer_heads: 2
+gestureformer_depformer_layers: 2
+gestureformer_depformer_heads: 1
+
+# 10 motion frames / 25 FPS = 400 ms = five gesture tokens.
+future_gesture_horizon_frames: 10
+future_motion_mode: reset
+# Fixed 16-token / 32-frame / 1.28-second revealed future pilot.
+future_window_ms: 1280
+future_segment_embedding: False
+reset_prefix_drop_tokens: 0
+
+# Keep this cache separate from the all-speaker cache because both the source
+# manifest and codec checkpoint hashes differ. Sixteen source clips expand to
+# 16 * 8 = 128 reset windows in each batched codec forward pass.
+reset_future_cache_dir: datasets/data_cache/beatx/reset_future_goodspk_h16_t8_seed2342
+reset_future_cache_mode: required
+reset_future_targets_per_clip: 8
+reset_future_manifest_seed: 2342
+reset_future_cache_splits: [train, val]
+reset_future_cache_shard_targets: 8192
+reset_future_cache_build_batch_size: 16
+reset_future_cache_build_workers: 4
+reset_future_cache_compression: gzip
+
+transformer_layers: 8
+convblock_layers: 2
+transformer_heads: 4
+num_temp_classifiers: 1
+param_dtype: "bfloat16"
+optim_dtype: "float32"
+
+# This is the Gesture-LM optimization batch size. It is independent of the
+# cache builder's source-clip batch size above.
+batch_size: 128
+lr_base: 1e-4
+loader_workers: 16
+grad_norm: 1.0
+opt: adamw
+lr_policy: step
+
+pretrain_warmup_epochs: 50
+inputtoken_noise_prob: 0
+memory_dropout_prob: 0.1
+memory_embnoise_prob: 0
+
+drop_lower_crossattn: True
+lower_bodypart_dropprob: 0.1
+
+gan_loss_weight: 0.0
+contrastive_loss_weight: 0.0
+genrecon_loss_weight: 0.0
+
+vad_guidance: True
+vad_use_face_logits: True
+vad_loss_weight: 0.05
+
+trainer: UpperFaceLowerGTDM3ResetFuture
+face_loss_weight: 2.5
+
+# Wayne, Lawrence, Stewart, and Solomon with lower_valid == 1.
+dataset_ratio: goodspk_beatx_lowervalid
+
+textaudio_emb_freeze: False
+varying_frame_length: False
+align_first_frame_yaw: True
+
+epochs: 10000
+decay_epochs: 2000
+test_period: 250
+decay_rate: 0.8
+log_period: 10
