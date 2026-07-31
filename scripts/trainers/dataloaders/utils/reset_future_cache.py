@@ -61,6 +61,10 @@ def build_reset_future_cache_signature_payload(args) -> dict[str, Any]:
     return {
         "schema": RESET_FUTURE_CACHE_SCHEMA,
         "schema_version": RESET_FUTURE_CACHE_VERSION,
+        "dataset_ratio": str(args.dataset_ratio),
+        "dataset_splits": [
+            str(split) for split in args.reset_future_cache_splits
+        ],
         "source_hdf5_path": os.path.abspath(args.beatx_cache_path),
         "source_hdf5_size_bytes": int(
             os.path.getsize(args.beatx_cache_path)

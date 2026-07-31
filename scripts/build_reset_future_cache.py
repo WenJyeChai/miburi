@@ -451,10 +451,15 @@ def _mark_completed(cache_dir: str, manifest) -> None:
 
 
 def build_cache(args) -> None:
-    if args.dataset_ratio != "full_beatx_lowervalid":
+    supported_dataset_ratios = {
+        "full_beatx_lowervalid",
+        "goodspk_beatx_lowervalid",
+    }
+    if args.dataset_ratio not in supported_dataset_ratios:
         raise ValueError(
-            "The first fixed-manifest cache is scoped to "
-            "dataset_ratio=full_beatx_lowervalid."
+            "Reset-future cache construction currently supports the "
+            "lower-valid BEATX full and good-speaker subsets; got "
+            f"dataset_ratio={args.dataset_ratio!r}."
         )
     if not args.reset_future_cache_dir:
         raise ValueError("--reset_future_cache_dir is required.")
