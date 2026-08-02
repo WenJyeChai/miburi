@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -121,6 +122,54 @@ def build_reset_future_cache_signature(args) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
+def _semantic_signature_payload(
+    signature: str | dict[str, Any],
+) -> dict[str, Any]:
+    """Return cache identity fields without filesystem-location metadata.
+
+    Absolute paths are retained in ``metadata.json`` for auditability, but
+    moving an otherwise identical dataset/checkpoint/cache checkout must not
+    invalidate its discrete RVQ codes. Checkpoint hashes, sizes, mtimes, and
+    every dataset/manifest/preprocessing setting remain part of the identity.
+    """
+
+    if isinstance(signature, str):
+        payload = json.loads(signature)
+    elif isinstance(signature, dict):
+        payload = copy.deepcopy(signature)
+    else:
+        raise TypeError(
+            "Reset-future cache signature must be JSON text or a mapping."
+        )
+    if not isinstance(payload, dict):
+        raise TypeError(
+            "Reset-future cache signature payload must be a mapping."
+        )
+
+    payload.pop("source_hdf5_path", None)
+    for key in ("upper_codec", "lower_codec", "face_codec"):
+        checkpoint = payload.get(key)
+        if isinstance(checkpoint, dict):
+            checkpoint.pop("path", None)
+    return payload
+
+
+def reset_future_cache_signatures_match(
+    stored_signature: str | dict[str, Any] | None,
+    expected_signature: str | dict[str, Any] | None,
+) -> bool:
+    """Compare semantic cache identity while ignoring absolute locations."""
+
+    if stored_signature is None or expected_signature is None:
+        return False
+    try:
+        return _semantic_signature_payload(
+            stored_signature
+        ) == _semantic_signature_payload(expected_signature)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return False
+
+
 def stable_sequence_seed(sequence_id: str, seed: int) -> int:
     digest = hashlib.sha256(
         f"{int(seed)}:{sequence_id}".encode("utf-8")
@@ -169,7 +218,10 @@ class ResetFutureManifestCache:
                 f"Reset-future cache is incomplete: {self.cache_dir}"
             )
         expected_signature = build_reset_future_cache_signature(args)
-        if self.metadata.get("build_signature") != expected_signature:
+        if not reset_future_cache_signatures_match(
+            self.metadata.get("build_signature"),
+            expected_signature,
+        ):
             raise RuntimeError(
                 "Reset-future cache provenance does not match the current "
                 "dataset, codec checkpoints, manifest, or window settings."

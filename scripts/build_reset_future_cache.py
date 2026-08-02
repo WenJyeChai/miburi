@@ -24,6 +24,7 @@ from trainers.dataloaders.utils.reset_future_cache import (
     RESET_FUTURE_CACHE_SCHEMA,
     RESET_FUTURE_CACHE_VERSION,
     build_reset_future_cache_signature,
+    reset_future_cache_signatures_match,
     stable_sequence_seed,
 )
 from trainers.utils import config
@@ -548,14 +549,35 @@ def build_cache(args) -> None:
     os.makedirs(cache_dir, exist_ok=True)
     metadata_path = os.path.join(cache_dir, METADATA_NAME)
     manifest_path = os.path.join(cache_dir, MANIFEST_NAME)
-    signature = build_reset_future_cache_signature(args)
+    current_signature = build_reset_future_cache_signature(args)
+    signature = current_signature
     if os.path.exists(metadata_path):
         with open(metadata_path, "r", encoding="utf-8") as handle:
             existing_metadata = json.load(handle)
-        if existing_metadata.get("build_signature") != signature:
+        stored_signature = existing_metadata.get("build_signature")
+        if not reset_future_cache_signatures_match(
+            stored_signature,
+            current_signature,
+        ):
             raise RuntimeError(
                 "Existing cache metadata does not match this build."
             )
+        # Preserve the original exact signature so metadata, manifest, and
+        # every shard remain tied to the same cache build.
+        signature = stored_signature
+    elif os.path.exists(manifest_path):
+        with h5py.File(manifest_path, "r") as existing_manifest:
+            stored_signature = str(
+                existing_manifest.attrs.get("build_signature", "")
+            )
+        if not reset_future_cache_signatures_match(
+            stored_signature,
+            current_signature,
+        ):
+            raise RuntimeError(
+                "Existing cache manifest does not match this build."
+            )
+        signature = stored_signature
 
     manifest = _manifest_arrays(args)
     if os.path.exists(manifest_path):

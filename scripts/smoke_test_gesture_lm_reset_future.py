@@ -7,12 +7,18 @@ exercise the same helpers with the three released gesture codecs.
 
 from __future__ import annotations
 
+import copy
+import json
+
 import torch
 
 from miburi.models.gesture_lm_reset_future import (
     build_reset_future_teacher_inputs,
     build_reset_future_teacher_inputs_from_codes,
     encode_reset_suffix,
+)
+from trainers.dataloaders.utils.reset_future_cache import (
+    reset_future_cache_signatures_match,
 )
 
 
@@ -377,6 +383,72 @@ def test_cached_fixed_window_matches_online_construction():
     torch.testing.assert_close(cached_valid, online_valid)
 
 
+def test_cache_signature_ignores_only_filesystem_locations():
+    stored = {
+        "schema": "miburi_reset_future_fixed_window",
+        "schema_version": 2,
+        "source_hdf5_path": "/build/repo/database.hdf5",
+        "source_hdf5_size_bytes": 123456,
+        "source_hdf5_mtime_ns": 987654321,
+        "future_offset_tokens": 5,
+        "future_window_tokens": 16,
+        "targets_per_clip": 105,
+        "upper_codec": {
+            "path": "/build/repo/upper.safetensors",
+            "size_bytes": 100,
+            "mtime_ns": 11,
+            "sha256": "upper-hash",
+        },
+        "lower_codec": {
+            "path": "/build/repo/lower.safetensors",
+            "size_bytes": 200,
+            "mtime_ns": 22,
+            "sha256": "lower-hash",
+        },
+        "face_codec": {
+            "path": "/build/repo/face.safetensors",
+            "size_bytes": 300,
+            "mtime_ns": 33,
+            "sha256": "face-hash",
+        },
+    }
+    relocated = copy.deepcopy(stored)
+    relocated["source_hdf5_path"] = "/runtime/repo/database.hdf5"
+    for key in ("upper_codec", "lower_codec", "face_codec"):
+        relocated[key]["path"] = f"/runtime/repo/{key}.safetensors"
+
+    assert reset_future_cache_signatures_match(
+        json.dumps(stored, sort_keys=True),
+        json.dumps(relocated, sort_keys=True),
+    )
+
+    changed_hash = copy.deepcopy(relocated)
+    changed_hash["upper_codec"]["sha256"] = "different-hash"
+    assert not reset_future_cache_signatures_match(
+        stored,
+        changed_hash,
+    )
+
+    changed_window = copy.deepcopy(relocated)
+    changed_window["future_window_tokens"] = 8
+    assert not reset_future_cache_signatures_match(
+        stored,
+        changed_window,
+    )
+
+    changed_dataset = copy.deepcopy(relocated)
+    changed_dataset["source_hdf5_mtime_ns"] += 1
+    assert not reset_future_cache_signatures_match(
+        stored,
+        changed_dataset,
+    )
+
+    assert not reset_future_cache_signatures_match(
+        "not-json",
+        relocated,
+    )
+
+
 if __name__ == "__main__":
     test_hidden_interval_and_past_invariance()
     test_future_sensitivity_and_cache_contamination()
@@ -386,7 +458,9 @@ if __name__ == "__main__":
     test_all_body_parts_are_reset_and_boundaries_align()
     test_reset_prefix_drop_masks_first_future_token()
     test_cached_fixed_window_matches_online_construction()
+    test_cache_signature_ignores_only_filesystem_locations()
     print(
         "Reset-future smoke tests passed "
-        "(invariance/sensitivity/batched reset/cache/boundary/all parts)."
+        "(invariance/sensitivity/batched reset/cache/signature/boundary/"
+        "all parts)."
     )
