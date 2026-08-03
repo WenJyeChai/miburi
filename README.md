@@ -329,24 +329,26 @@ These verify past/hidden-interval invariance, future sensitivity, codec-state
 isolation, frame/token boundary alignment, lower-velocity boundary handling,
 and replacement of all three body-part streams.
 
-To distill the historical fixed-window good-speaker T2 checkpoint into the
-ordinary causal student, use the reset-regret config. The frozen teacher is
-queried with the original `h16_t105` cache; the student never receives reset
-codes and retains the released causal MIBURI inputs and losses:
+To distill the full-suffix good-speaker T2 checkpoint into the ordinary causal
+student, use the matching full-suffix reset-regret config. The frozen teacher
+is queried with the same variable-length `t120` reset suffixes used during
+teacher training; the student never receives reset codes and retains the
+released causal MIBURI inputs and losses:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 \
 python scripts/train.py \
-    --config configs/gtdm3_resetregret_h16_t105_audiotext_ufl_25_beatx_small.yaml \
+    --config configs/gtdm3_resetregret_fullsuffix_t120_audiotext_ufl_25_beatx_small.yaml \
     --wandb True --wandb_mode online \
-    --wandb_project miburi --wandb_group student-resetregret-h16-t105
+    --wandb_project miburi --wandb_group student-resetregret-fullsuffix-t120
 ```
 
-Do not substitute the full-suffix cache for this checkpoint. Its frozen
-teacher must see the same five-token guard, 16 reset tokens, and target range
-`t=0..104` used during teacher training. The student trains with causal CE
-from scratch; q0 forward-KL distillation starts at epoch 50 and ramps from
-alpha 0.1 to 1.0 over 15 epochs.
+The historical fixed-window experiment remains available as
+`configs/gtdm3_resetregret_h16_t105_audiotext_ufl_25_beatx_small.yaml`; pair it
+only with its original `h16_t105` teacher/cache. In either setting, teacher
+checkpoint and reset cache must use the same five-token guard and suffix mode.
+The student trains with causal CE from scratch; q0 forward-KL distillation
+starts at epoch 50 and ramps from alpha 0.1 to 1.0 over 15 epochs.
 
 #### Experimental three-q0 global-C2F Gesture LM
 

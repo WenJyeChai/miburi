@@ -663,7 +663,12 @@ class UpperFaceLowerGTDM3RegretTrainer(UpperFaceLowerGTDM3Trainer):
 class UpperFaceLowerGTDM3ResetRegretTrainer(
     UpperFaceLowerGTDM3RegretTrainer
 ):
-    """Causal student distilled from a cached reset-future q0 teacher."""
+    """Causal student distilled from a cached reset-future q0 teacher.
+
+    Both legacy fixed-window caches and current full-remaining-suffix caches
+    are supported.  The cache provenance check ties the selected mode to the
+    configured horizon, window, dataset, and gesture codecs.
+    """
 
     def __init__(self, args):
         super().__init__(args)
@@ -683,7 +688,7 @@ class UpperFaceLowerGTDM3ResetRegretTrainer(
             )
         if int(args.reset_prefix_drop_tokens) != 0:
             raise ValueError(
-                "This fixed-window reset teacher was trained with "
+                "Reset-regret distillation currently requires "
                 "reset_prefix_drop_tokens=0."
             )
 
@@ -713,11 +718,6 @@ class UpperFaceLowerGTDM3ResetRegretTrainer(
             expected_cardinality=cardinalities.pop(),
             require_complete=True,
         )
-        if not self.reset_regret_cache.is_fixed_window:
-            raise RuntimeError(
-                "The selected teacher checkpoint requires its legacy "
-                "fixed-window reset cache, not a full-suffix cache."
-            )
         if (
             self.reset_regret_cache.future_offset_tokens
             != self.regret_horizon_tokens
@@ -726,24 +726,39 @@ class UpperFaceLowerGTDM3ResetRegretTrainer(
                 "Reset cache future offset does not match the frozen "
                 "teacher horizon."
             )
-        expected_window_tokens = round(
-            float(args.future_window_ms)
-            * float(args.motion_fps)
-            / 1000.0
-        ) // int(args.frame_chunk_size)
-        if (
-            self.reset_regret_cache.future_window_tokens
-            != expected_window_tokens
-        ):
-            raise RuntimeError(
-                "Reset cache window length does not match "
-                "future_window_ms."
+        if self.reset_regret_cache.is_fixed_window:
+            expected_window_tokens = round(
+                float(args.future_window_ms)
+                * float(args.motion_fps)
+                / 1000.0
+            ) // int(args.frame_chunk_size)
+            if (
+                self.reset_regret_cache.future_window_tokens
+                != expected_window_tokens
+            ):
+                raise RuntimeError(
+                    "Reset cache window length does not match "
+                    "future_window_ms."
+                )
+            suffix_description = (
+                f"fixed {self.reset_regret_cache.future_window_tokens} "
+                "tokens"
+            )
+        else:
+            if float(args.future_window_ms) != 0.0:
+                raise RuntimeError(
+                    "Full-suffix reset-regret caches require "
+                    "future_window_ms=0."
+                )
+            suffix_description = (
+                "full remaining suffix, max "
+                f"{self.reset_regret_cache.maximum_future_tokens} tokens"
             )
         logger.info(
             f"[GPU{self.global_rank}:{self.local_rank}] Reset-regret "
             f"teacher inputs: cache={args.reset_future_cache_dir}; "
             f"targets/clip={args.reset_future_targets_per_clip}; "
-            f"window={self.reset_regret_cache.future_window_tokens} tokens; "
+            f"window={suffix_description}; "
             f"prefix_drop={args.reset_prefix_drop_tokens}."
         )
 
@@ -784,19 +799,26 @@ class UpperFaceLowerGTDM3ResetRegretTrainer(
             window.codes[:, :window.valid_future_tokens]
             for window in cached_windows
         ]
-        expected_window = int(
-            self.reset_regret_cache.future_window_tokens
+        cached_lengths = torch.tensor(
+            [int(window.shape[-1]) for window in reset_windows],
+            device=target_times.device,
+            dtype=target_times.dtype,
         )
-        if any(
-            window.shape[-1] != expected_window
-            for window in reset_windows
-        ):
+        if (cached_lengths <= 0).any():
             raise RuntimeError(
-                "Fixed-window reset cache returned a truncated suffix."
+                "Reset-regret cache returned an empty future suffix."
             )
+        if self.reset_regret_cache.is_fixed_window:
+            expected_window = int(
+                self.reset_regret_cache.future_window_tokens
+            )
+            if (cached_lengths != expected_window).any():
+                raise RuntimeError(
+                    "Fixed-window reset cache returned a truncated suffix."
+                )
         valid_lengths = token_loss_mask[:, 0].sum(dim=-1).long()
         required_ends = (
-            target_times + self.regret_horizon_tokens + expected_window
+            target_times + self.regret_horizon_tokens + cached_lengths
         )
         if (required_ends > valid_lengths).any():
             raise RuntimeError(
