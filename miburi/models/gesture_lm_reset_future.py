@@ -216,7 +216,7 @@ def build_reset_future_teacher_inputs_from_codes(
     torch.Tensor,
     list[ResetFutureBoundary],
 ]:
-    """Insert independently encoded fixed reset windows into teacher inputs."""
+    """Insert independently encoded reset suffixes into teacher inputs."""
 
     if input_codes.shape != target_codes.shape or input_codes.dim() != 3:
         raise ValueError(
@@ -292,7 +292,7 @@ def build_reset_future_teacher_inputs_from_codes(
         )
 
         # Mask the complete future first so no intact token survives outside
-        # the fixed reset window.
+        # the cached reset suffix.
         temporal_codes[
             batch_index,
             :,

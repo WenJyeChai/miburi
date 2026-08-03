@@ -436,7 +436,7 @@ def parse_args():
         type=str,
         help=(
             "Directory containing metadata.json, target_manifest.h5, and "
-            "sharded fixed-window reset-code HDF5 files."
+            "sharded packed full-suffix reset-code HDF5 files."
         ),
     )
     parser.add(
@@ -445,7 +445,8 @@ def parse_args():
         type=str,
         choices=["off", "prefer", "required"],
         help=(
-            "Use fixed-manifest reset codes from reset_future_cache_dir. "
+            "Use fixed-manifest full-suffix reset codes from "
+            "reset_future_cache_dir. "
             "prefer falls back to online encoding; required fails on any "
             "missing or incompatible cache entry."
         ),
@@ -454,7 +455,10 @@ def parse_args():
         "--reset_future_targets_per_clip",
         default=8,
         type=int,
-        help="Fixed uniformly sampled manifest targets per source clip.",
+        help=(
+            "Manifest targets per source clip. Set this to every eligible "
+            "target for exhaustive coverage."
+        ),
     )
     parser.add(
         "--reset_future_manifest_seed",
@@ -481,7 +485,7 @@ def parse_args():
         type=int,
         help=(
             "Source clips per offline cache-build batch. Each clip expands "
-            "to reset_future_targets_per_clip parallel codec windows."
+            "to reset_future_targets_per_clip independent reset suffixes."
         ),
     )
     parser.add(

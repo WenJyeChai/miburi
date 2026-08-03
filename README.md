@@ -282,7 +282,8 @@ tokens from the intact full-clip codec encoding.
 
 T2 uses the same teacher architecture, audio/text condition, and selected-frame
 objective, but replaces the revealed upper/lower/face future window with an
-independent encoding of globally preprocessed raw motion:
+independent encoding of the complete remaining globally preprocessed raw-motion
+suffix:
 
 ```bash
 # Four-speaker good-speaker pilot: build the reset-code cache first.
@@ -297,12 +298,13 @@ python scripts/train.py \
     --wandb_project miburi --wandb_group t2-reset-future-goodspk
 ```
 
-The good-speaker cache uses all 105 target positions whose five-token guard
-and 16-token (1.28-second) future window fit in a 10-second clip. The builder
-batches fixed-length raw windows through each non-streaming causal codec in
-chunks of 128, writes only `uint16` RVQ indices to sharded HDF5 files, and can
-resume incomplete shards. Training chooses one manifest target per clip per
-epoch and cycles all 105 without rerunning the codecs, so the training batch
+The good-speaker cache uses all 120 target positions that retain at least one
+future token after the five-token guard in a 10-second clip. Each target stores
+the full remaining suffix, from 120 tokens for the earliest target down to one
+token for the latest. The builder length-buckets and right-pads independent
+suffixes within each non-streaming causal-codec batch, then packs only the valid
+`uint16` RVQ indices into sharded HDF5 files. Training chooses one manifest
+target per clip per epoch and cycles all 120 without rerunning the codecs, so the training batch
 size and epoch length remain 128 clips and match the original good-speaker
 configuration. The all-speaker sparse-pilot config remains available as
 `configs/gtdm3_resetfuture_fullcondition_oneq0_beatx_allspk.yaml`.
@@ -312,9 +314,9 @@ the immediate boundary-artifact ablation; this does not require rebuilding the
 cache. A learned reset-segment embedding is intentionally disabled in this
 first architecture-matched comparison.
 
-The existing T1 run reveals the remaining intact suffix rather than this fixed
-16-token window. Treat it as a historical baseline. A controlled T1/T2
-comparison must use the same target manifest and fixed future window.
+T1 and T2 now expose the same remaining-suffix boundary. Their privileged
+motion differs only in whether those future codes come from the intact
+full-clip codec state (T1) or a freshly reset codec state (T2).
 
 Before launching a checkpoint run, execute the focused information-boundary
 checks:

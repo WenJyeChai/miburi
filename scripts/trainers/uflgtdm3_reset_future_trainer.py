@@ -3,12 +3,14 @@
 T0 and T1 already exist as the released causal trainer and the masked
 full-condition future trainer.  This T2 trainer keeps T1's architecture,
 initialization policy, and selected-frame objective, but replaces every intact
-future upper/lower/face token with a fresh encoding of a globally preprocessed
-raw-motion window. The fixed-cache pilot uses a reproducible target manifest.
+future upper/lower/face token with a fresh encoding of the globally
+preprocessed raw-motion suffix. The cache uses a reproducible target manifest
+and packed variable-length suffix rows.
 """
 
 from __future__ import annotations
 
+import torch
 from loguru import logger
 
 from miburi.models import (
@@ -138,11 +140,6 @@ class UpperFaceLowerGTDM3ResetFutureTrainer(
         )
         self.reset_future_cache = None
         if self.reset_future_cache_mode != "off":
-            if self.reset_future_window_tokens is None:
-                raise ValueError(
-                    "Cached T2 training requires a fixed positive "
-                    "future_window_ms."
-                )
             if not args.reset_future_cache_dir:
                 if self.reset_future_cache_mode == "required":
                     raise ValueError(
@@ -186,7 +183,7 @@ class UpperFaceLowerGTDM3ResetFutureTrainer(
                         raise
                     logger.exception(
                         "Reset cache could not be opened; mode=prefer will "
-                        "use online fixed-window encoding."
+                        "use online reset-suffix encoding."
                     )
 
         suffix_description = (
@@ -202,11 +199,11 @@ class UpperFaceLowerGTDM3ResetFutureTrainer(
         )
         if self.reset_future_cache is not None:
             logger.info(
-                f"[GPU{self.global_rank}:{self.local_rank}] T2 fixed "
+                f"[GPU{self.global_rank}:{self.local_rank}] T2 full-suffix "
                 f"manifest cache loaded from "
                 f"{args.reset_future_cache_dir}; targets/clip="
-                f"{args.reset_future_targets_per_clip}; window="
-                f"{self.reset_future_window_tokens} tokens."
+                f"{args.reset_future_targets_per_clip}; max suffix="
+                f"{self.reset_future_cache.maximum_future_tokens} tokens."
             )
 
     def minimum_future_anchor_tokens(self):
@@ -348,6 +345,9 @@ class UpperFaceLowerGTDM3ResetFutureTrainer(
                         sample_ids,
                         split=split,
                         epoch=epoch,
+                        minimum_valid_future_tokens=(
+                            self.reset_prefix_drop_tokens + 1
+                        ),
                     )
                 )
                 target_times = target_times.to(
@@ -366,7 +366,7 @@ class UpperFaceLowerGTDM3ResetFutureTrainer(
                 if not self._logged_cache_fallback:
                     logger.exception(
                         "Reset cache lookup failed; mode=prefer is falling "
-                        "back to online fixed-window encoding."
+                        "back to online reset-suffix encoding."
                     )
                     self._logged_cache_fallback = True
                 target_times = self._select_target_times(
@@ -383,19 +383,35 @@ class UpperFaceLowerGTDM3ResetFutureTrainer(
                 iteration,
             )
         valid_lengths = token_loss_mask[:, 0].sum(dim=-1).long()
-        required_ends = (
-            target_times
-            + self.future_horizon_tokens
-            + (
+        if reset_code_windows is not None:
+            suffix_lengths = torch.tensor(
+                [window.shape[-1] for window in reset_code_windows],
+                device=target_times.device,
+                dtype=target_times.dtype,
+            )
+        else:
+            suffix_lengths = torch.full_like(
+                target_times,
                 self.reset_future_window_tokens
                 if self.reset_future_window_tokens is not None
-                else 1
+                else 1,
             )
+        required_ends = (
+            target_times + self.future_horizon_tokens + suffix_lengths
         )
         if (required_ends > valid_lengths).any():
             raise RuntimeError(
-                "Fixed reset target/window exceeds a valid gesture "
+                "Reset target/suffix exceeds a valid gesture "
                 "sequence."
+            )
+        if (
+            reset_code_windows is not None
+            and self.reset_future_window_tokens is None
+            and not torch.equal(required_ends, valid_lengths)
+        ):
+            raise RuntimeError(
+                "Cached reset codes do not cover the full remaining valid "
+                "suffix."
             )
         temporal_codes = self._build_reset_temporal_codes(
             input_codes,

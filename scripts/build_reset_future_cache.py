@@ -1,4 +1,4 @@
-"""Build fixed-target, fixed-window reset codes in sharded HDF5 files."""
+"""Build fixed-target, full-suffix reset codes in packed HDF5 shards."""
 
 from __future__ import annotations
 
@@ -120,13 +120,12 @@ def _manifest_arrays(args):
     offset_tokens = (
         int(args.future_gesture_horizon_frames) // frame_size
     )
-    window_frames = round(
-        float(args.future_window_ms)
-        * float(args.motion_fps)
-        / 1000.0
-    )
-    window_tokens = window_frames // frame_size
-    max_target = gesture_tokens - offset_tokens - window_tokens
+    if float(args.future_window_ms) != 0.0:
+        raise ValueError(
+            "Full-suffix reset cache construction requires "
+            "future_window_ms=0."
+        )
+    max_target = gesture_tokens - offset_tokens - 1
     candidate_targets = np.arange(max_target + 1, dtype=np.int64)
     targets_per_clip = int(args.reset_future_targets_per_clip)
     if targets_per_clip <= 0:
@@ -189,8 +188,8 @@ def _manifest_arrays(args):
                 future_starts.append(future_start)
                 raw_start = future_start * frame_size
                 raw_starts.append(raw_start)
-                raw_ends.append(raw_start + window_frames)
-                valid_lengths.append(window_tokens)
+                raw_ends.append(int(args.pose_length))
+                valid_lengths.append(gesture_tokens - future_start)
                 target_sequence_indices.append(sequence_index)
                 target_slots.append(target_slot)
             sequence_offsets.append(len(targets))
@@ -205,27 +204,44 @@ def _manifest_arrays(args):
         raise ValueError(
             "reset_future_cache_shard_targets must be positive."
         )
+    valid_lengths_array = np.asarray(valid_lengths, dtype=np.uint16)
     shard_indices = np.empty(target_count, dtype=np.int32)
     shard_rows = np.empty(target_count, dtype=np.int32)
+    shard_token_offsets = np.empty(target_count, dtype=np.int64)
     shard_names = []
-    split_shard_counts = defaultdict(int)
-    split_shard_fill = defaultdict(int)
-    for sequence_index, split in enumerate(sequence_splits):
-        row_start = sequence_offsets[sequence_index]
-        row_end = sequence_offsets[sequence_index + 1]
-        for row in range(row_start, row_end):
-            shard_number = split_shard_counts[split]
-            fill = split_shard_fill[split]
-            if fill >= shard_capacity:
-                shard_number += 1
-                split_shard_counts[split] = shard_number
-                fill = 0
+    shard_name_to_index = {}
+    for split in args.reset_future_cache_splits:
+        split_rows = [
+            row
+            for row, sequence_index in enumerate(
+                target_sequence_indices
+            )
+            if sequence_splits[sequence_index] == split
+        ]
+        # Length-major shards line up the builder's length-bucketed codec
+        # batches with contiguous HDF5 writes while the manifest continues to
+        # group target rows by source sequence for epoch cycling.
+        split_rows.sort(
+            key=lambda row: (int(valid_lengths_array[row]), row)
+        )
+        for split_row, row in enumerate(split_rows):
+            shard_number = split_row // shard_capacity
+            fill = split_row % shard_capacity
             shard_name = f"{split}_{shard_number:05d}.h5"
-            if shard_name not in shard_names:
+            if shard_name not in shard_name_to_index:
+                shard_name_to_index[shard_name] = len(shard_names)
                 shard_names.append(shard_name)
-            shard_indices[row] = shard_names.index(shard_name)
+            shard_indices[row] = shard_name_to_index[shard_name]
             shard_rows[row] = fill
-            split_shard_fill[split] = fill + 1
+
+    for shard_index in range(len(shard_names)):
+        rows = np.flatnonzero(shard_indices == shard_index)
+        rows = rows[np.argsort(shard_rows[rows])]
+        lengths = valid_lengths_array[rows].astype(np.int64)
+        offsets = np.concatenate(
+            [np.zeros(1, dtype=np.int64), np.cumsum(lengths)]
+        )
+        shard_token_offsets[rows] = offsets[:-1]
 
     return {
         "sequence_ids": sequence_ids,
@@ -247,23 +263,20 @@ def _manifest_arrays(args):
             raw_ends,
             dtype=np.uint16,
         ),
-        "valid_future_length": np.asarray(
-            valid_lengths,
-            dtype=np.uint16,
-        ),
+        "valid_future_length": valid_lengths_array,
         "sequence_index": np.asarray(
             target_sequence_indices,
             dtype=np.int32,
         ),
-        "target_slot": np.asarray(target_slots, dtype=np.uint8),
+        "target_slot": np.asarray(target_slots, dtype=np.uint16),
         "shard_index": shard_indices,
         "shard_row": shard_rows,
+        "shard_token_offset": shard_token_offsets,
         "shard_names": shard_names,
         "datasets": datasets,
         "gesture_tokens": gesture_tokens,
         "offset_tokens": offset_tokens,
-        "window_tokens": window_tokens,
-        "window_frames": window_frames,
+        "maximum_future_tokens": gesture_tokens - offset_tokens,
     }
 
 
@@ -304,6 +317,7 @@ def _write_manifest(
             "target_slot",
             "shard_index",
             "shard_row",
+            "shard_token_offset",
         ):
             h5.create_dataset(name, data=manifest[name])
 
@@ -332,6 +346,7 @@ def _validate_existing_manifest(
         "target_slot",
         "shard_index",
         "shard_row",
+        "shard_token_offset",
     )
     with h5py.File(path, "r") as existing:
         if str(existing.attrs.get("build_signature", "")) != (
@@ -391,18 +406,23 @@ def _initialize_shards(
     compression = _compression_kwargs(args)
     for shard_index, shard_name in enumerate(manifest["shard_names"]):
         rows = np.where(manifest["shard_index"] == shard_index)[0]
+        rows = rows[np.argsort(manifest["shard_row"][rows])]
         if rows.size == 0:
             continue
         shard_path = os.path.join(cache_dir, shard_name)
+        lengths = manifest["valid_future_length"][rows].astype(np.int64)
+        token_offsets = np.concatenate(
+            [np.zeros(1, dtype=np.int64), np.cumsum(lengths)]
+        )
+        total_tokens = int(token_offsets[-1])
         if os.path.exists(shard_path):
             with h5py.File(shard_path, "r") as existing:
-                expected = (
-                    rows.size,
-                    num_codebooks,
-                    manifest["window_tokens"],
-                )
                 if (
-                    existing["reset_future_codes"].shape != expected
+                    existing["reset_future_codes"].shape
+                    != (total_tokens, num_codebooks)
+                    or not np.array_equal(
+                        existing["token_offset"][:], token_offsets
+                    )
                     or str(existing.attrs.get("build_signature", ""))
                     != build_signature
                 ):
@@ -421,21 +441,17 @@ def _initialize_shards(
             shard.attrs["default_reset_prefix_drop_tokens"] = int(
                 args.reset_prefix_drop_tokens
             )
-            shard.attrs["future_window_tokens"] = manifest[
-                "window_tokens"
+            shard.attrs["future_window_mode"] = "full_remaining_suffix"
+            shard.attrs["maximum_future_tokens"] = manifest[
+                "maximum_future_tokens"
             ]
             shard.create_dataset(
                 "reset_future_codes",
-                shape=(
-                    rows.size,
-                    num_codebooks,
-                    manifest["window_tokens"],
-                ),
+                shape=(total_tokens, num_codebooks),
                 dtype=np.uint16,
                 chunks=(
-                    min(256, rows.size),
+                    min(4096, total_tokens),
                     num_codebooks,
-                    manifest["window_tokens"],
                 ),
                 **compression,
             )
@@ -449,6 +465,7 @@ def _initialize_shards(
                 "manifest_row",
                 data=rows.astype(np.int64),
             )
+            shard.create_dataset("token_offset", data=token_offsets)
 
 
 def _pending_manifest_rows(cache_dir: str, manifest) -> set[int]:
@@ -476,25 +493,57 @@ def _write_encoded_rows(
         shard_index = int(manifest["shard_index"][manifest_row])
         shard_row = int(manifest["shard_row"][manifest_row])
         grouped[shard_index].append(
-            (shard_row, source_index)
+            (shard_row, source_index, manifest_row)
         )
     for shard_index, entries in grouped.items():
         entries.sort()
-        shard_rows = np.asarray(
-            [entry[0] for entry in entries],
-            dtype=np.int64,
-        )
-        source_rows = np.asarray(
-            [entry[1] for entry in entries],
-            dtype=np.int64,
-        )
         path = os.path.join(
             cache_dir,
             manifest["shard_names"][shard_index],
         )
         with h5py.File(path, "r+") as shard:
-            shard["reset_future_codes"][shard_rows] = codes[source_rows]
-            shard["written"][shard_rows] = True
+            run_start = 0
+            while run_start < len(entries):
+                run_end = run_start + 1
+                while (
+                    run_end < len(entries)
+                    and entries[run_end][0]
+                    == entries[run_end - 1][0] + 1
+                ):
+                    run_end += 1
+                run = entries[run_start:run_end]
+                packed_parts = []
+                for _, source_row, manifest_row in run:
+                    valid_length = int(
+                        manifest["valid_future_length"][manifest_row]
+                    )
+                    packed_parts.append(
+                        codes[source_row, :, :valid_length].T
+                    )
+                packed = np.concatenate(packed_parts, axis=0)
+                first_manifest_row = run[0][2]
+                last_manifest_row = run[-1][2]
+                token_start = int(
+                    manifest["shard_token_offset"][first_manifest_row]
+                )
+                token_end = int(
+                    manifest["shard_token_offset"][last_manifest_row]
+                    + manifest["valid_future_length"][last_manifest_row]
+                )
+                if packed.shape != (
+                    token_end - token_start,
+                    codes.shape[1],
+                ):
+                    raise RuntimeError(
+                        "Packed reset-code run disagrees with manifest "
+                        "offsets."
+                    )
+                shard["reset_future_codes"][token_start:token_end] = packed
+                shard_rows = np.asarray(
+                    [entry[0] for entry in run], dtype=np.int64
+                )
+                shard["written"][shard_rows] = True
+                run_start = run_end
             shard.flush()
 
 
@@ -627,18 +676,21 @@ def build_cache(args) -> None:
     cardinality = cardinalities.pop()
     if cardinality > np.iinfo(np.uint16).max + 1:
         raise RuntimeError("Codec codes do not fit uint16.")
+    cached_future_tokens = int(
+        manifest["valid_future_length"].astype(np.int64).sum()
+    )
     estimated_code_bytes = (
-        int(manifest["target_token_index"].shape[0])
+        cached_future_tokens
         * num_codebooks
-        * int(manifest["window_tokens"])
         * np.dtype(np.uint16).itemsize
     )
     logger.info(
-        "Reset cache plan: sequences={} targets={} window_tokens={} "
-        "codebooks={} uncompressed_codes={:.2f} MiB",
+        "Reset cache plan: sequences={} targets={} full_suffix_tokens={} "
+        "max_suffix_tokens={} codebooks={} uncompressed_codes={:.2f} MiB",
         len(manifest["sequence_ids"]),
         int(manifest["target_token_index"].shape[0]),
-        int(manifest["window_tokens"]),
+        cached_future_tokens,
+        int(manifest["maximum_future_tokens"]),
         num_codebooks,
         estimated_code_bytes / (1024 ** 2),
     )
@@ -659,7 +711,10 @@ def build_cache(args) -> None:
             "build_signature": signature,
             "num_codebooks": num_codebooks,
             "cardinality": cardinality,
-            "future_window_tokens": manifest["window_tokens"],
+            "maximum_future_tokens": manifest[
+                "maximum_future_tokens"
+            ],
+            "cached_future_tokens": cached_future_tokens,
             "future_offset_tokens": manifest["offset_tokens"],
             "manifest_seed": int(args.reset_future_manifest_seed),
             "sequence_count": len(manifest["sequence_ids"]),
@@ -697,6 +752,7 @@ def build_cache(args) -> None:
             "reset_future_cache_codec_batch_size must be positive."
         )
     processed_batches = 0
+    padding_parity_checked = False
     for split in args.reset_future_cache_splits:
         dataset = manifest["datasets"][split]
         loader = DataLoader(
@@ -766,6 +822,23 @@ def build_cache(args) -> None:
             if not rows_to_encode:
                 continue
 
+            # Bucket by suffix length before codec chunking. Right padding is
+            # safe for the causal codec, and length sorting avoids paying the
+            # longest-suffix cost for every shorter target in the clip.
+            order = sorted(
+                range(len(rows_to_encode)),
+                key=lambda index: int(
+                    manifest["valid_future_length"][
+                        rows_to_encode[index]
+                    ]
+                ),
+            )
+            rows_to_encode = [rows_to_encode[index] for index in order]
+            windows_by_part = [
+                [part_windows[index] for index in order]
+                for part_windows in windows_by_part
+            ]
+
             for window_start in range(
                 0,
                 len(rows_to_encode),
@@ -778,14 +851,28 @@ def build_cache(args) -> None:
                 chunk_rows = rows_to_encode[
                     window_start:window_end
                 ]
+                chunk_lengths = np.asarray(
+                    [
+                        manifest["valid_future_length"][row]
+                        for row in chunk_rows
+                    ],
+                    dtype=np.int64,
+                )
+                maximum_chunk_tokens = int(chunk_lengths.max())
+                check_padding_parity = (
+                    not padding_parity_checked
+                    and int(chunk_lengths.min())
+                    < maximum_chunk_tokens
+                )
+                parity_sample = int(chunk_lengths.argmin())
                 reset_parts = []
                 with torch.inference_mode():
                     for part_index, (codec, part_windows) in enumerate(
                         zip(codecs, windows_by_part)
                     ):
-                        windows = torch.stack(
+                        windows = torch.nn.utils.rnn.pad_sequence(
                             part_windows[window_start:window_end],
-                            dim=0,
+                            batch_first=True,
                         )
                         encoding = encode_reset_suffix(
                             codec,
@@ -800,12 +887,50 @@ def build_cache(args) -> None:
                                 else None
                             ),
                         )
+                        if check_padding_parity:
+                            individual = encode_reset_suffix(
+                                codec,
+                                part_windows[
+                                    window_start + parity_sample
+                                ].unsqueeze(0),
+                                suffix_start_frame=0,
+                                zero_first_frame_feature_slice=(
+                                    (
+                                        lower_velocity_start,
+                                        lower_velocity_start + 3,
+                                    )
+                                    if part_index == 1
+                                    else None
+                                ),
+                            )
+                            individual_tokens = int(
+                                individual.codes.shape[-1]
+                            )
+                            if not torch.equal(
+                                encoding.codes[
+                                    parity_sample:parity_sample + 1,
+                                    :,
+                                    :individual_tokens,
+                                ],
+                                individual.codes,
+                            ):
+                                raise RuntimeError(
+                                    "Causal-codec right-padding parity check "
+                                    "failed; refusing to cache padded suffix "
+                                    "batches."
+                                )
                         reset_parts.append(encoding.codes)
+                if check_padding_parity:
+                    padding_parity_checked = True
+                    logger.info(
+                        "Real-codec right-padding parity check passed for "
+                        "upper/lower/face reset suffixes."
+                    )
                 reset_codes = torch.cat(reset_parts, dim=1)
                 expected_shape = (
                     len(chunk_rows),
                     num_codebooks,
-                    manifest["window_tokens"],
+                    maximum_chunk_tokens,
                 )
                 if reset_codes.shape != expected_shape:
                     raise RuntimeError(
@@ -851,13 +976,14 @@ def build_cache(args) -> None:
     metadata["updated_at_unix"] = time.time()
     _write_json(metadata_path, metadata)
     logger.info(
-        "Fixed-window reset cache complete: dir={} sequences={} targets={} "
-        "shards={} window_tokens={}",
+        "Full-suffix reset cache complete: dir={} sequences={} targets={} "
+        "shards={} cached_future_tokens={} max_suffix_tokens={}",
         cache_dir,
         metadata["sequence_count"],
         metadata["target_count"],
         metadata["shard_count"],
-        metadata["future_window_tokens"],
+        metadata["cached_future_tokens"],
+        metadata["maximum_future_tokens"],
     )
 
 

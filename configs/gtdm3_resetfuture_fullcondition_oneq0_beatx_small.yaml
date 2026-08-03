@@ -3,7 +3,7 @@
 # The dataset and codec checkpoints match the repository's established
 # good-speaker experiment: Wayne, Lawrence, Stewart, and Solomon, restricted
 # to clips with valid lower-body motion.
-project_name: gtdm3_resetfuture400ms_h16_t105_fullcondition_oneq0_goodspk_beatx_bf16
+project_name: gtdm3_resetfuture400ms_fullsuffix_t120_fullcondition_oneq0_goodspk_beatx_bf16
 
 is_train: True
 ddp: False
@@ -48,24 +48,25 @@ gestureformer_depformer_heads: 1
 # 10 motion frames / 25 FPS = 400 ms = five gesture tokens.
 future_gesture_horizon_frames: 10
 future_motion_mode: reset
-# Fixed 16-token / 32-frame / 1.28-second revealed future pilot.
-future_window_ms: 1280
+# Reveal the complete remaining reset-encoded suffix, matching T1's future
+# boundary. Zero means no maximum suffix length.
+future_window_ms: 0
 future_segment_embedding: False
 reset_prefix_drop_tokens: 0
 
-# Exhaustively cache every target whose five-token guard and 16-token future
-# window fit in the 125-token clip: 125 - 5 - 16 + 1 = 105 targets. Training
-# still selects one target per clip per epoch, so batch size and epoch length
-# remain identical to the original good-speaker run; all targets are covered
-# once every 105 epochs.
-reset_future_cache_dir: datasets/data_cache/beatx/reset_future_goodspk_h16_t105
+# Exhaustively cache every target with at least one future token after the
+# five-token guard: 125 - 5 = 120 targets (t=0..119). Each row stores the full
+# remaining suffix, with variable lengths 120..1. Training still selects one
+# target per clip per epoch, so batch size and epoch length remain unchanged;
+# all targets are covered once every 120 epochs.
+reset_future_cache_dir: datasets/data_cache/beatx/reset_future_goodspk_fullsuffix_t120
 reset_future_cache_mode: required
-reset_future_targets_per_clip: 105
+reset_future_targets_per_clip: 120
 reset_future_manifest_seed: 2342
 reset_future_cache_splits: [train, val]
 reset_future_cache_shard_targets: 8192
 reset_future_cache_build_batch_size: 16
-# Bound actual codec activation memory independently of 105 targets/clip.
+# Bound actual codec activation memory independently of 120 targets/clip.
 reset_future_cache_codec_batch_size: 128
 reset_future_cache_build_workers: 4
 reset_future_cache_compression: gzip
