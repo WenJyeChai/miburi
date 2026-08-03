@@ -27,7 +27,13 @@ from miburi.models import loaders
 from miburi.models.gesture_lm_future_gesture import (
     build_masked_future_gesture_inputs,
 )
+from miburi.models.gesture_lm_reset_future import (
+    build_reset_future_teacher_inputs_from_codes,
+)
 
+from .dataloaders.utils.reset_future_cache import (
+    ResetFutureManifestCache,
+)
 from .uflgtdm3_trainer import UpperFaceLowerGTDM3Trainer
 from .utils import tools as other_tools
 
@@ -376,6 +382,36 @@ class UpperFaceLowerGTDM3RegretTrainer(UpperFaceLowerGTDM3Trainer):
         hashed = (offsets * 48_271 + 1) % 2_147_483_647
         return hashed % (maximum_targets + 1)
 
+    def _build_regret_teacher_inputs(
+        self,
+        *,
+        token_loss_mask,
+        input_codes,
+        gesture_tokens,
+        split,
+        epoch,
+        iteration,
+        sample_ids=None,
+    ):
+        """Select targets and construct the privileged teacher gesture view."""
+
+        del sample_ids
+        target_times = self._select_regret_target_times(
+            token_loss_mask,
+            split=split,
+            epoch=epoch,
+            iteration=iteration,
+        )
+        teacher_temporal_codes = build_masked_future_gesture_inputs(
+            input_codes,
+            gesture_tokens,
+            target_times,
+            horizon_tokens=self.regret_horizon_tokens,
+            past_context_tokens=self.regret_past_context_tokens,
+            mask_token_id=self.modelout_ignore_index,
+        )
+        return target_times, teacher_temporal_codes
+
     def _update_regret_metrics(
         self,
         *,
@@ -466,25 +502,23 @@ class UpperFaceLowerGTDM3RegretTrainer(UpperFaceLowerGTDM3Trainer):
         sum_condition,
         epoch,
         iteration,
+        sample_ids=None,
     ):
         if self.regret_teacher is None:
             raise RuntimeError(
                 "Regret loss requested without a loaded teacher."
             )
         alpha = self._regret_alpha(epoch)
-        target_times = self._select_regret_target_times(
-            token_loss_mask,
-            split=split,
-            epoch=epoch,
-            iteration=iteration,
-        )
-        teacher_temporal_codes = build_masked_future_gesture_inputs(
-            input_codes,
-            gesture_tokens,
-            target_times,
-            horizon_tokens=self.regret_horizon_tokens,
-            past_context_tokens=self.regret_past_context_tokens,
-            mask_token_id=self.modelout_ignore_index,
+        target_times, teacher_temporal_codes = (
+            self._build_regret_teacher_inputs(
+                token_loss_mask=token_loss_mask,
+                input_codes=input_codes,
+                gesture_tokens=gesture_tokens,
+                split=split,
+                epoch=epoch,
+                iteration=iteration,
+                sample_ids=sample_ids,
+            )
         )
 
         self.regret_teacher.eval()
@@ -624,3 +658,175 @@ class UpperFaceLowerGTDM3RegretTrainer(UpperFaceLowerGTDM3Trainer):
             iteration=iteration,
             **batch_context,
         )
+
+
+class UpperFaceLowerGTDM3ResetRegretTrainer(
+    UpperFaceLowerGTDM3RegretTrainer
+):
+    """Causal student distilled from a cached reset-future q0 teacher."""
+
+    def __init__(self, args):
+        super().__init__(args)
+        self.reset_regret_cache = None
+        self._logged_reset_regret_boundaries: set[str] = set()
+        if not args.is_train:
+            return
+        if str(args.reset_future_cache_mode) != "required":
+            raise ValueError(
+                "Reset-regret distillation requires "
+                "reset_future_cache_mode=required."
+            )
+        if not args.reset_future_cache_dir:
+            raise ValueError(
+                "Reset-regret distillation requires "
+                "reset_future_cache_dir."
+            )
+        if int(args.reset_prefix_drop_tokens) != 0:
+            raise ValueError(
+                "This fixed-window reset teacher was trained with "
+                "reset_prefix_drop_tokens=0."
+            )
+
+        cardinalities = {
+            int(codec.cardinality)
+            for codec in (
+                self.upper_gesture_codec,
+                self.lower_gesture_codec,
+                self.face_gesture_codec,
+            )
+        }
+        if len(cardinalities) != 1:
+            raise RuntimeError(
+                "Gesture codec cardinalities do not match."
+            )
+        self.reset_regret_cache = ResetFutureManifestCache(
+            args.reset_future_cache_dir,
+            args=args,
+            expected_codebooks=sum(
+                int(codec.num_codebooks)
+                for codec in (
+                    self.upper_gesture_codec,
+                    self.lower_gesture_codec,
+                    self.face_gesture_codec,
+                )
+            ),
+            expected_cardinality=cardinalities.pop(),
+            require_complete=True,
+        )
+        if not self.reset_regret_cache.is_fixed_window:
+            raise RuntimeError(
+                "The selected teacher checkpoint requires its legacy "
+                "fixed-window reset cache, not a full-suffix cache."
+            )
+        if (
+            self.reset_regret_cache.future_offset_tokens
+            != self.regret_horizon_tokens
+        ):
+            raise RuntimeError(
+                "Reset cache future offset does not match the frozen "
+                "teacher horizon."
+            )
+        expected_window_tokens = round(
+            float(args.future_window_ms)
+            * float(args.motion_fps)
+            / 1000.0
+        ) // int(args.frame_chunk_size)
+        if (
+            self.reset_regret_cache.future_window_tokens
+            != expected_window_tokens
+        ):
+            raise RuntimeError(
+                "Reset cache window length does not match "
+                "future_window_ms."
+            )
+        logger.info(
+            f"[GPU{self.global_rank}:{self.local_rank}] Reset-regret "
+            f"teacher inputs: cache={args.reset_future_cache_dir}; "
+            f"targets/clip={args.reset_future_targets_per_clip}; "
+            f"window={self.reset_regret_cache.future_window_tokens} tokens; "
+            f"prefix_drop={args.reset_prefix_drop_tokens}."
+        )
+
+    def _build_regret_teacher_inputs(
+        self,
+        *,
+        token_loss_mask,
+        input_codes,
+        gesture_tokens,
+        split,
+        epoch,
+        iteration,
+        sample_ids=None,
+    ):
+        del iteration
+        if self.reset_regret_cache is None:
+            raise RuntimeError(
+                "Reset-regret teacher inputs requested without a cache."
+            )
+        if sample_ids is None:
+            raise RuntimeError(
+                "Reset-regret distillation requires filechunk_id sample "
+                "keys."
+            )
+        if len(sample_ids) != int(gesture_tokens.shape[0]):
+            raise RuntimeError(
+                "Reset-regret sample key count does not match the batch."
+            )
+
+        target_times, cached_windows = self.reset_regret_cache.load_batch(
+            sample_ids,
+            split=split,
+            epoch=epoch,
+            minimum_valid_future_tokens=1,
+        )
+        target_times = target_times.to(token_loss_mask.device)
+        reset_windows = [
+            window.codes[:, :window.valid_future_tokens]
+            for window in cached_windows
+        ]
+        expected_window = int(
+            self.reset_regret_cache.future_window_tokens
+        )
+        if any(
+            window.shape[-1] != expected_window
+            for window in reset_windows
+        ):
+            raise RuntimeError(
+                "Fixed-window reset cache returned a truncated suffix."
+            )
+        valid_lengths = token_loss_mask[:, 0].sum(dim=-1).long()
+        required_ends = (
+            target_times + self.regret_horizon_tokens + expected_window
+        )
+        if (required_ends > valid_lengths).any():
+            raise RuntimeError(
+                "Cached reset-regret target/window exceeds a valid gesture "
+                "sequence."
+            )
+
+        teacher_temporal_codes, _, boundaries = (
+            build_reset_future_teacher_inputs_from_codes(
+                input_codes,
+                gesture_tokens,
+                target_times,
+                reset_code_windows=reset_windows,
+                horizon_tokens=self.regret_horizon_tokens,
+                past_context_tokens=self.regret_past_context_tokens,
+                mask_token_id=self.modelout_ignore_index,
+                motion_fps=int(self.args.motion_fps),
+                frame_size=int(self.args.frame_chunk_size),
+                reset_prefix_drop_tokens=0,
+            )
+        )
+        if split not in self._logged_reset_regret_boundaries and boundaries:
+            boundary = boundaries[0]
+            logger.info(
+                f"[GPU{self.global_rank}:{self.local_rank}] Reset-regret "
+                f"{split} boundary: target={boundary.target_token}; "
+                f"suffix_start={boundary.suffix_start_token}; "
+                f"encoded/visible={boundary.encoded_tokens}/"
+                f"{boundary.visible_tokens}; "
+                f"offset={boundary.offset_ms:.1f}ms."
+            )
+            self._logged_reset_regret_boundaries.add(split)
+        return target_times, teacher_temporal_codes

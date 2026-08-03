@@ -1328,6 +1328,7 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 audio_codes=audio_codes,
                 text_codes=text_codes,
                 sum_condition=tar_spk,
+                sample_ids=dict_data.get("filechunk_id"),
             )
             if additional_loss is not None:
                 g_loss_final += additional_loss
@@ -1596,6 +1597,7 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                     sum_condition=tar_spk,
                     epoch=epoch,
                     iteration=its,
+                    sample_ids=dict_data.get("filechunk_id"),
                 )
 
                 if self.args.debug:

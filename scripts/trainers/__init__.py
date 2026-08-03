@@ -34,6 +34,10 @@ _TRAINER_IMPORTS = (
         "UpperFaceLowerGTDM3RegretTrainer",
     ),
     (
+        ".uflgtdm3_regret_trainer",
+        "UpperFaceLowerGTDM3ResetRegretTrainer",
+    ),
+    (
         ".uflgtdm3_reset_future_trainer",
         "UpperFaceLowerGTDM3ResetFutureTrainer",
     ),

@@ -618,6 +618,101 @@ def test_packed_variable_suffix_cache_round_trip():
         assert windows[0].valid_future_tokens == 3
         cache.close()
 
+        # The H16 teacher checkpoint must continue to read its original v2
+        # fixed-window cache even though new T2 caches use packed suffixes.
+        legacy_dir = os.path.join(temporary_dir, "legacy_fixed")
+        os.makedirs(legacy_dir)
+        args.future_window_ms = 160.0  # four frames / two gesture tokens
+        legacy_signature = build_reset_future_cache_signature(args)
+        legacy_metadata = json.loads(legacy_signature)
+        assert legacy_metadata["schema"] == (
+            "miburi_reset_future_fixed_window"
+        )
+        legacy_metadata.update(
+            {
+                "build_signature": legacy_signature,
+                "num_codebooks": 2,
+                "cardinality": 31,
+                "future_window_tokens": 2,
+                "future_offset_tokens": 1,
+                "manifest_seed": 2342,
+                "target_count": 2,
+                "completed": True,
+            }
+        )
+        with open(
+            os.path.join(legacy_dir, METADATA_NAME),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            json.dump(legacy_metadata, handle)
+        with h5py.File(
+            os.path.join(legacy_dir, MANIFEST_NAME), "w"
+        ) as manifest:
+            manifest.attrs["build_signature"] = legacy_signature
+            manifest.create_dataset(
+                "sequence_ids",
+                data=np.asarray(["sequence"], dtype=object),
+                dtype=string_dtype,
+            )
+            manifest.create_dataset(
+                "sequence_splits",
+                data=np.asarray(["train"], dtype=object),
+                dtype=string_dtype,
+            )
+            manifest.create_dataset(
+                "shard_names",
+                data=np.asarray(["train_00000.h5"], dtype=object),
+                dtype=string_dtype,
+            )
+            legacy_arrays = {
+                "sequence_target_offsets": np.asarray([0, 2], np.int64),
+                "target_token_index": np.asarray([0, 1], np.uint16),
+                "future_start_token": np.asarray([1, 2], np.uint16),
+                "valid_future_length": np.asarray([2, 2], np.uint16),
+                "sequence_index": np.asarray([0, 0], np.int32),
+                "shard_index": np.asarray([0, 0], np.int32),
+                "shard_row": np.asarray([0, 1], np.int32),
+            }
+            for name, values in legacy_arrays.items():
+                manifest.create_dataset(name, data=values)
+        fixed_codes = np.asarray(
+            [
+                [[1, 2], [3, 4]],
+                [[5, 6], [7, 8]],
+            ],
+            dtype=np.uint16,
+        )
+        with h5py.File(
+            os.path.join(legacy_dir, "train_00000.h5"), "w"
+        ) as shard:
+            shard.attrs["completed"] = True
+            shard.attrs["build_signature"] = legacy_signature
+            shard.create_dataset("reset_future_codes", data=fixed_codes)
+            shard.create_dataset(
+                "written", data=np.asarray([True, True], dtype=np.bool_)
+            )
+            shard.create_dataset(
+                "manifest_row", data=np.asarray([0, 1], dtype=np.int64)
+            )
+        legacy_cache = ResetFutureManifestCache(
+            legacy_dir,
+            args=args,
+            expected_codebooks=2,
+            expected_cardinality=31,
+        )
+        assert legacy_cache.is_fixed_window
+        seen = {}
+        for epoch in (0, 1):
+            targets, windows = legacy_cache.load_batch(
+                ["sequence"], split="train", epoch=epoch
+            )
+            seen[int(targets.item())] = windows[0].codes.numpy()
+        legacy_cache.close()
+        assert set(seen) == {0, 1}
+        np.testing.assert_array_equal(seen[0], fixed_codes[0])
+        np.testing.assert_array_equal(seen[1], fixed_codes[1])
+
 
 if __name__ == "__main__":
     test_hidden_interval_and_past_invariance()

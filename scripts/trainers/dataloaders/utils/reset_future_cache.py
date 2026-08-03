@@ -17,6 +17,10 @@ import torch
 
 RESET_FUTURE_CACHE_SCHEMA = "miburi_reset_future_full_suffix"
 RESET_FUTURE_CACHE_VERSION = 3
+LEGACY_FIXED_RESET_FUTURE_CACHE_SCHEMA = (
+    "miburi_reset_future_fixed_window"
+)
+LEGACY_FIXED_RESET_FUTURE_CACHE_VERSION = 2
 METADATA_NAME = "metadata.json"
 MANIFEST_NAME = "target_manifest.h5"
 
@@ -58,17 +62,40 @@ def build_reset_future_cache_signature_payload(args) -> dict[str, Any]:
             "future_gesture_horizon_frames must align to a whole number of "
             "gesture tokens."
         )
-    if float(args.future_window_ms) != 0.0:
-        raise ValueError(
-            "Full-suffix reset cache construction requires "
-            "future_window_ms=0. A fixed reset window changes the teacher's "
-            "information boundary."
-        )
     gesture_tokens = int(args.pose_length) // frame_size
     offset_tokens = (
         int(args.future_gesture_horizon_frames) // frame_size
     )
-    eligible_targets = gesture_tokens - offset_tokens
+    future_window_ms = float(args.future_window_ms)
+    if future_window_ms < 0:
+        raise ValueError("future_window_ms cannot be negative.")
+    if future_window_ms > 0:
+        window_frames = round(
+            future_window_ms * float(args.motion_fps) / 1000.0
+        )
+        if window_frames <= 0 or window_frames % frame_size:
+            raise ValueError(
+                "future_window_ms must map to a positive whole number of "
+                "gesture tokens."
+            )
+        window_tokens = window_frames // frame_size
+        eligible_targets = (
+            gesture_tokens - offset_tokens - window_tokens + 1
+        )
+        cache_identity = {
+            "schema": LEGACY_FIXED_RESET_FUTURE_CACHE_SCHEMA,
+            "schema_version": LEGACY_FIXED_RESET_FUTURE_CACHE_VERSION,
+            "future_window_frames": int(window_frames),
+            "future_window_tokens": int(window_tokens),
+        }
+    else:
+        eligible_targets = gesture_tokens - offset_tokens
+        cache_identity = {
+            "schema": RESET_FUTURE_CACHE_SCHEMA,
+            "schema_version": RESET_FUTURE_CACHE_VERSION,
+            "future_window_mode": "full_remaining_suffix",
+            "maximum_future_tokens": int(eligible_targets),
+        }
     if eligible_targets <= 0:
         raise ValueError(
             "The configured future offset leaves no reset suffix token."
@@ -84,9 +111,7 @@ def build_reset_future_cache_signature_payload(args) -> dict[str, Any]:
         if requested_targets == eligible_targets
         else "fixed_uniform_random_without_replacement"
     )
-    return {
-        "schema": RESET_FUTURE_CACHE_SCHEMA,
-        "schema_version": RESET_FUTURE_CACHE_VERSION,
+    payload = {
         "dataset_ratio": str(args.dataset_ratio),
         "dataset_splits": [
             str(split) for split in args.reset_future_cache_splits
@@ -110,8 +135,6 @@ def build_reset_future_cache_signature_payload(args) -> dict[str, Any]:
         "future_offset_tokens": (
             int(args.future_gesture_horizon_frames) // frame_size
         ),
-        "future_window_mode": "full_remaining_suffix",
-        "maximum_future_tokens": int(eligible_targets),
         "targets_per_clip": requested_targets,
         "eligible_targets_per_clip": int(eligible_targets),
         "target_sampling": target_sampling,
@@ -126,6 +149,8 @@ def build_reset_future_cache_signature_payload(args) -> dict[str, Any]:
         "lower_codec": _checkpoint_signature(args.lowerbodycodec_ckpt),
         "face_codec": _checkpoint_signature(args.facecodec_ckpt),
     }
+    payload.update(cache_identity)
+    return payload
 
 
 def build_reset_future_cache_signature(args) -> str:
@@ -222,6 +247,21 @@ class ResetFutureManifestCache:
             )
         with open(metadata_path, "r", encoding="utf-8") as handle:
             self.metadata = json.load(handle)
+        schema = str(self.metadata.get("schema", ""))
+        schema_version = int(self.metadata.get("schema_version", -1))
+        self.is_fixed_window = (
+            schema == LEGACY_FIXED_RESET_FUTURE_CACHE_SCHEMA
+            and schema_version == LEGACY_FIXED_RESET_FUTURE_CACHE_VERSION
+        )
+        self.is_full_suffix = (
+            schema == RESET_FUTURE_CACHE_SCHEMA
+            and schema_version == RESET_FUTURE_CACHE_VERSION
+        )
+        if not (self.is_fixed_window or self.is_full_suffix):
+            raise RuntimeError(
+                "Unsupported reset-future cache schema: "
+                f"{schema!r} version {schema_version}."
+            )
         if require_complete and not bool(
             self.metadata.get("completed", False)
         ):
@@ -239,9 +279,16 @@ class ResetFutureManifestCache:
             )
         self.num_codebooks = int(self.metadata["num_codebooks"])
         self.cardinality = int(self.metadata["cardinality"])
-        self.maximum_future_tokens = int(
-            self.metadata["maximum_future_tokens"]
-        )
+        if self.is_fixed_window:
+            self.future_window_tokens = int(
+                self.metadata["future_window_tokens"]
+            )
+            self.maximum_future_tokens = self.future_window_tokens
+        else:
+            self.future_window_tokens = None
+            self.maximum_future_tokens = int(
+                self.metadata["maximum_future_tokens"]
+            )
         self.future_offset_tokens = int(
             self.metadata["future_offset_tokens"]
         )
@@ -307,10 +354,13 @@ class ResetFutureManifestCache:
             self._manifest["shard_row"][:],
             dtype=np.int64,
         )
-        self.shard_token_offsets = np.asarray(
-            self._manifest["shard_token_offset"][:],
-            dtype=np.int64,
-        )
+        if self.is_full_suffix:
+            self.shard_token_offsets = np.asarray(
+                self._manifest["shard_token_offset"][:],
+                dtype=np.int64,
+            )
+        else:
+            self.shard_token_offsets = None
         self.shard_names = tuple(
             value.decode("utf-8")
             if isinstance(value, bytes)
@@ -337,14 +387,16 @@ class ResetFutureManifestCache:
             raise RuntimeError(
                 "Reset target manifest length differs from metadata."
             )
-        for values in (
+        manifest_arrays = [
             self.future_start_tokens,
             self.valid_future_lengths,
             self.target_sequence_indices,
             self.shard_indices,
             self.shard_rows,
-            self.shard_token_offsets,
-        ):
+        ]
+        if self.shard_token_offsets is not None:
+            manifest_arrays.append(self.shard_token_offsets)
+        for values in manifest_arrays:
             if values.shape != (target_rows,):
                 raise RuntimeError(
                     "Reset target manifest arrays have inconsistent lengths."
@@ -409,7 +461,7 @@ class ResetFutureManifestCache:
             raise RuntimeError(
                 "Manifest reset windows extend past their source clips."
             )
-        if not np.array_equal(
+        if self.is_full_suffix and not np.array_equal(
             self.future_start_tokens + self.valid_future_lengths,
             np.full(target_rows, gesture_steps, dtype=np.int64),
         ):
@@ -485,14 +537,27 @@ class ResetFutureManifestCache:
                 f"Reset cache shard is missing required datasets: {path}"
             )
         token_offsets = shard.get("token_offset")
-        if (
-            codes.ndim != 2
-            or codes.shape[1] != self.num_codebooks
-            or codes.dtype != np.dtype(np.uint16)
-            or manifest_rows.ndim != 1
-            or token_offsets is None
-            or token_offsets.shape != (manifest_rows.shape[0] + 1,)
-        ):
+        if self.is_fixed_window:
+            layout_invalid = (
+                codes.ndim != 3
+                or codes.shape[1:] != (
+                    self.num_codebooks,
+                    self.future_window_tokens,
+                )
+                or codes.dtype != np.dtype(np.uint16)
+                or manifest_rows.shape != (codes.shape[0],)
+            )
+        else:
+            layout_invalid = (
+                codes.ndim != 2
+                or codes.shape[1] != self.num_codebooks
+                or codes.dtype != np.dtype(np.uint16)
+                or manifest_rows.ndim != 1
+                or token_offsets is None
+                or token_offsets.shape
+                != (manifest_rows.shape[0] + 1,)
+            )
+        if layout_invalid:
             shard.close()
             raise RuntimeError(
                 f"Reset cache shard has an invalid layout: {path}"
@@ -521,14 +586,7 @@ class ResetFutureManifestCache:
         expected_shard_rows = self.shard_rows[
             expected_manifest_rows
         ]
-        stored_token_offsets = np.asarray(
-            token_offsets[:],
-            dtype=np.int64,
-        )
-        expected_lengths = self.valid_future_lengths[
-            expected_manifest_rows
-        ]
-        if (
+        rows_invalid = (
             not np.array_equal(
                 stored_manifest_rows,
                 expected_manifest_rows,
@@ -537,17 +595,28 @@ class ResetFutureManifestCache:
                 expected_shard_rows,
                 np.arange(manifest_rows.shape[0], dtype=np.int64),
             )
-            or stored_token_offsets[0] != 0
-            or stored_token_offsets[-1] != codes.shape[0]
-            or not np.array_equal(
-                np.diff(stored_token_offsets),
-                expected_lengths,
+        )
+        if self.is_full_suffix:
+            stored_token_offsets = np.asarray(
+                token_offsets[:],
+                dtype=np.int64,
             )
-            or not np.array_equal(
-                self.shard_token_offsets[expected_manifest_rows],
-                stored_token_offsets[:-1],
+            expected_lengths = self.valid_future_lengths[
+                expected_manifest_rows
+            ]
+            rows_invalid = rows_invalid or (
+                stored_token_offsets[0] != 0
+                or stored_token_offsets[-1] != codes.shape[0]
+                or not np.array_equal(
+                    np.diff(stored_token_offsets),
+                    expected_lengths,
+                )
+                or not np.array_equal(
+                    self.shard_token_offsets[expected_manifest_rows],
+                    stored_token_offsets[:-1],
+                )
             )
-        ):
+        if rows_invalid:
             shard.close()
             raise RuntimeError(
                 f"Reset cache shard rows disagree with the manifest: {path}"
@@ -656,28 +725,41 @@ class ResetFutureManifestCache:
                 raise RuntimeError(
                     "Reset shard rows do not match the target manifest."
                 )
-            token_offsets = np.asarray(
-                shard["token_offset"][:], dtype=np.int64
-            )
-            for shard_row, batch_index, manifest_row in entries:
-                token_start = int(token_offsets[shard_row])
-                token_end = int(token_offsets[shard_row + 1])
-                row_codes = np.asarray(
-                    shard["reset_future_codes"][token_start:token_end],
+            if self.is_fixed_window:
+                shard_codes = np.asarray(
+                    shard["reset_future_codes"][row_indices],
                     dtype=np.int64,
-                ).T
-                expected_length = int(
-                    self.valid_future_lengths[manifest_row]
                 )
-                if row_codes.shape != (
-                    self.num_codebooks,
-                    expected_length,
+                for row_codes, (_, batch_index, _) in zip(
+                    shard_codes,
+                    entries,
                 ):
-                    raise RuntimeError(
-                        "Packed reset suffix length disagrees with the "
-                        "manifest."
+                    loaded_codes[batch_index] = row_codes
+            else:
+                token_offsets = np.asarray(
+                    shard["token_offset"][:], dtype=np.int64
+                )
+                for shard_row, batch_index, manifest_row in entries:
+                    token_start = int(token_offsets[shard_row])
+                    token_end = int(token_offsets[shard_row + 1])
+                    row_codes = np.asarray(
+                        shard[
+                            "reset_future_codes"
+                        ][token_start:token_end],
+                        dtype=np.int64,
+                    ).T
+                    expected_length = int(
+                        self.valid_future_lengths[manifest_row]
                     )
-                loaded_codes[batch_index] = row_codes
+                    if row_codes.shape != (
+                        self.num_codebooks,
+                        expected_length,
+                    ):
+                        raise RuntimeError(
+                            "Packed reset suffix length disagrees with the "
+                            "manifest."
+                        )
+                    loaded_codes[batch_index] = row_codes
 
         windows = []
         targets = []
@@ -687,7 +769,12 @@ class ResetFutureManifestCache:
             valid_length = int(
                 self.valid_future_lengths[manifest_row]
             )
-            expected_shape = (self.num_codebooks, valid_length)
+            expected_shape = (
+                self.num_codebooks,
+                self.future_window_tokens
+                if self.is_fixed_window
+                else valid_length,
+            )
             if codes.shape != expected_shape:
                 raise RuntimeError(
                     f"Cached reset window has shape {codes.shape}, expected "
