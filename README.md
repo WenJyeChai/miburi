@@ -309,6 +309,40 @@ size and epoch length remain 128 clips and match the original good-speaker
 configuration. The all-speaker sparse-pilot config remains available as
 `configs/gtdm3_resetfuture_fullcondition_oneq0_beatx_allspk.yaml`.
 
+For the exhaustive all-speaker experiment matched to the released all-speaker
+codecs and optimization schedule, first build its separate codec-fingerprinted
+120-target cache, then train the privileged teacher:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 \
+python scripts/build_reset_future_cache.py \
+    --config configs/gtdm3_resetfuture_fullcondition_oneq0_beatx_allspk_t120.yaml
+
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 \
+python scripts/train.py \
+    --config configs/gtdm3_resetfuture_fullcondition_oneq0_beatx_allspk_t120.yaml \
+    --wandb True --wandb_mode online \
+    --wandb_project miburi --wandb_group t2-reset-future-allspk-t120
+```
+
+The causal all-speaker student reuses the same reset cache. Supply the newly
+trained teacher checkpoint explicitly so a stale good-speaker or sparse-pilot
+teacher cannot be selected accidentally:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 \
+python scripts/train.py \
+    --config configs/gtdm3_resetregret_fullsuffix_t120_audiotext_ufl_25_beatx_allspk.yaml \
+    --regret_teacher_ckpt experiments/<allspk-t120-teacher-run>/last_<epoch>.safetensors \
+    --wandb True --wandb_mode online \
+    --wandb_project miburi --wandb_group student-resetregret-allspk-t120
+```
+
+This exhaustive cache is distinct from both
+`reset_future_goodspk_fullsuffix_t120` and the all-speaker `t8` sparse pilot.
+The chunked `beatx_gtdm3/database.hdf5` source is reused; only the reset-code
+cache must be rebuilt when the dataset selector or gesture codecs change.
+
 The first reset token remains visible. Set `--reset_prefix_drop_tokens 1` for
 the immediate boundary-artifact ablation; this does not require rebuilding the
 cache. A learned reset-segment embedding is intentionally disabled in this
