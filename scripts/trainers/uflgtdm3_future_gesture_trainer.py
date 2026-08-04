@@ -43,6 +43,16 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
     model_class = GTemporalDepthModel3FutureGesture
     expose_future_audio_text = False
 
+    def _future_model(self):
+        """Return the underlying model when training is wrapped in DDP.
+
+        Forward passes must still go through ``self.model`` so DDP can
+        synchronize gradients.  This accessor is only for model metadata and
+        custom inference helpers that DistributedDataParallel does not expose.
+        """
+
+        return self.model.module if self.args.ddp else self.model
+
     def __init__(self, args):
         unsupported_auxiliary = {
             "contrastive_loss_weight": args.contrastive_loss_weight,
@@ -87,7 +97,8 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
         self.future_horizon_seconds = (
             self.future_horizon_motion_frames / args.motion_fps
         )
-        self.past_context_tokens = int(self.model.context)
+        future_model = self._future_model()
+        self.past_context_tokens = int(future_model.context)
         if self.past_context_tokens <= 0:
             raise ValueError(
                 "Masked-frame future teachers require a positive original "
@@ -99,7 +110,7 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
             f"frames = {self.future_horizon_seconds:.3f}s = "
             f"{self.future_horizon_tokens} gesture tokens; retained past="
             f"{self.past_context_tokens} gesture tokens; "
-            f"audio/text mode={self.model.temporal_condition_mode}"
+            f"audio/text mode={future_model.temporal_condition_mode}"
         )
 
     def get_model(self, args):
@@ -425,7 +436,7 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
             model_targets = target_times
 
         temporal_out, q0_logits = (
-            self.model.forward_oracle_temporal_targets(
+            self._future_model().forward_oracle_temporal_targets(
                 model_temporal_codes,
                 model_audio,
                 model_text,
@@ -532,7 +543,7 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
         )
         if predicted.shape != (
             target_batch,
-            self.model.n_q,
+            self._future_model().n_q,
         ):
             raise RuntimeError(
                 "Unexpected oracle token shape "
@@ -607,7 +618,7 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
         logger.info(
             f"Oracle mode={mode}; target_batch_size={target_batch_size}; "
             f"CFG={cfg_coef}; audio/text mode="
-            f"{self.model.temporal_condition_mode}; final "
+            f"{self._future_model().temporal_condition_mode}; final "
             f"{self.minimum_future_anchor_tokens()} gesture tokens are "
             "excluded."
         )
@@ -796,7 +807,7 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
             predicted_codes = torch.empty(
                 (
                     1,
-                    self.model.n_q,
+                    self._future_model().n_q,
                     valid_gesture_steps,
                 ),
                 device=self.local_rank,
@@ -805,7 +816,7 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
 
             depth_cross_attention_mask = torch.zeros(
                 1,
-                self.model.n_q,
+                self._future_model().n_q,
                 1,
                 device=self.local_rank,
                 dtype=torch.bool,
@@ -895,7 +906,7 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
             )
             total_gesture_tokens += valid_gesture_steps
             total_code_tokens += (
-                valid_gesture_steps * self.model.n_q
+                valid_gesture_steps * self._future_model().n_q
             )
 
             upper_count = self.upper_gesture_codec.num_codebooks
