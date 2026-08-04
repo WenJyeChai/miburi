@@ -36,8 +36,16 @@ def main_worker(args):
     if "LOCAL_RANK" in os.environ:
         # torchrun-launched (multi-GPU DDP)
         set_device()
+        local_rank = int(os.environ["LOCAL_RANK"])
         logger.info("Going to init comms...")
-        dist.init_process_group(backend=BACKEND)
+        # Tell NCCL which logical CUDA device belongs to this rank before
+        # trainer construction reaches its first collective. Without this,
+        # PyTorch 2.9 guesses from the global rank and can deadlock when
+        # CUDA_VISIBLE_DEVICES remaps physical GPUs.
+        dist.init_process_group(
+            backend=BACKEND,
+            device_id=torch.device("cuda", local_rank),
+        )
     else:
         # Plain `python scripts/train.py` (single GPU, no DDP)
         logger.info("LOCAL_RANK not set: single-process mode, skipping dist.init_process_group.")

@@ -27,10 +27,10 @@ from miburi.models import loaders, GestureMimiCodec
 class BaseCausalCodecTrainer(object):
     def __init__(self, args):
         self.args = args
-        if args.ddp: dist.barrier()
-        
         self.local_rank = int(os.environ.get("LOCAL_RANK", "N/A")) if args.ddp else 0
         self.global_rank = get_rank() if args.ddp else 0
+        if args.ddp:
+            dist.barrier(device_ids=[self.local_rank])
 
         logger.info(f"[GPU{self.global_rank}:{self.local_rank}] Init trainer...")
 
