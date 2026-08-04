@@ -4,6 +4,7 @@ import sys
 import time
 import warnings
 import os
+import torch
 import torch.multiprocessing as mp
 import torch.distributed as dist
 
@@ -31,7 +32,7 @@ def main_worker(args):
     if not sys.warnoptions:
         warnings.simplefilter("ignore")
     # Initialize the process group using environment variables
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
     if "LOCAL_RANK" in os.environ:
         # torchrun-launched (multi-GPU DDP)
