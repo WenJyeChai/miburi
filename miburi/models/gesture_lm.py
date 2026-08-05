@@ -866,6 +866,47 @@ class GestureLMGen(StreamingModule[_GLMGenState]):
         text_emb = text_emb.squeeze(1) # B x T=1 dim
         return audio_emb, text_emb
 
+    def _prepare_speaker_condition(
+        self,
+        condition_sum: torch.Tensor | None,
+        batch_size: int,
+    ) -> torch.Tensor | None:
+        """Build per-sample speaker IDs for conditional and CFG branches.
+
+        The released evaluator supplies a singleton speaker ID and relies on
+        broadcasting it over the generation batch.  The corrected evaluator
+        supplies one speaker ID per sample.  Supporting both shapes preserves
+        the released path while allowing correct batched evaluation.
+
+        Audio/text CFG is ordered as ``[conditional batch, null batch]``.  The
+        speaker condition is retained in both branches, so it must use the
+        same ordering rather than interleaving duplicate speaker IDs.
+        """
+
+        if condition_sum is None:
+            return None
+        if condition_sum.ndim != 2 or condition_sum.shape[1] != 1:
+            raise ValueError(
+                "Speaker condition must have shape [1, 1] or [B, 1], "
+                f"got {tuple(condition_sum.shape)}."
+            )
+        if condition_sum.shape[0] == 1:
+            base_condition = condition_sum.expand(batch_size, 1)
+        elif condition_sum.shape[0] == batch_size:
+            base_condition = condition_sum
+        else:
+            raise ValueError(
+                "Speaker condition batch must be singleton or match the "
+                f"generation batch ({batch_size}), got "
+                f"{condition_sum.shape[0]}."
+            )
+        if self.cfg_coef != 1.:
+            return torch.cat(
+                [base_condition, base_condition],
+                dim=0,
+            )
+        return base_condition
+
     @torch.no_grad()
     def step(self, condition: torch.Tensor | tp.List[torch.Tensor], ca_query_padding_mask: torch.Tensor | None = None
              ) -> tp.Tuple[torch.Tensor] | None:
@@ -922,7 +963,10 @@ class GestureLMGen(StreamingModule[_GLMGenState]):
                 f"Expected ungenerated token id {glm_model.ungenerated_token_id}, got {input_} at {state.offset}."
         
         # also check if temp transformer is streaming or not # check sum_condition shape
-        sum_condition = state.condition_sum.expand(B, 1)
+        sum_condition = self._prepare_speaker_condition(
+            state.condition_sum,
+            state.batch_size,
+        )
         # condition_tensors = [audio_emb, text_emb]
         if self.cfg_coef != 1.:
             # duplicate the batch for CFG

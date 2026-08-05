@@ -1673,6 +1673,17 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
             f"sampling={gesture_lm_config['use_sampling']}, "
             f"CFG={eval_cfg_coef}"
         )
+        correct_speaker_batch = bool(
+            getattr(self.args, "eval_correct_speaker_batch", False)
+        )
+        logger.info(
+            "Evaluation speaker conditioning: {}",
+            (
+                "one correct speaker ID per sample"
+                if correct_speaker_batch
+                else "released singleton/first-sample broadcast"
+            ),
+        )
         # breakpoint()
 
         
@@ -1704,7 +1715,18 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                 #     continue
                 
                 # breakpoint()
-                gesture_spk_condition = torch.full((1, 1), tar_spk[0], device=self.local_rank, dtype=torch.long)
+                if correct_speaker_batch:
+                    gesture_spk_condition = tar_spk.reshape(-1, 1).to(
+                        device=self.local_rank,
+                        dtype=torch.long,
+                    )
+                else:
+                    gesture_spk_condition = torch.full(
+                        (1, 1),
+                        tar_spk[0],
+                        device=self.local_rank,
+                        dtype=torch.long,
+                    )
                 # breakpoint() # check the flowgen settings
                 glmgen = self.get_generation_class()(
                     self.model,
