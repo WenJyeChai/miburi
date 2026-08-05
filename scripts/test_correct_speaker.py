@@ -8,6 +8,26 @@ metrics, and checkpoint loading code.
 """
 
 import os
+import sys
+from pathlib import Path
+
+
+# ``python scripts/<entrypoint>.py`` puts ``scripts/`` rather than the
+# repository root first on sys.path.  On machines with a non-editable MIBURI
+# installation, that can silently import a stale site-packages copy.  This
+# evaluator depends on the matching per-sample-CFG generator implementation,
+# so resolve the repository package explicitly before importing the trainer.
+_REPOSITORY_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPOSITORY_ROOT in sys.path:
+    sys.path.remove(_REPOSITORY_ROOT)
+sys.path.insert(0, _REPOSITORY_ROOT)
+
+import miburi
+
+print(
+    "[test_correct_speaker] Using miburi package from "
+    f"{Path(miburi.__file__).resolve()}"
+)
 
 from test import main_worker
 from trainers.utils import config
