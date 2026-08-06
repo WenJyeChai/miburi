@@ -76,6 +76,7 @@ def forward_teacher_view(
     sum_condition: torch.Tensor,
     ca_depth_padding_mask: torch.Tensor | None = None,
     include_depth_levels: bool = True,
+    depth_input_codes: torch.Tensor | None = None,
 ) -> tp.Tuple[torch.Tensor, torch.Tensor | None]:
     """Run the GlobalRegret teacher view of ``model`` for one training step.
 
@@ -84,6 +85,16 @@ def forward_teacher_view(
     own forward pass; only the temporal transformer's cross-attention mask
     is relaxed to bidirectional for the duration of this call. Runs entirely
     under ``no_grad`` -- the paper's stop-gradient teacher view.
+
+    ``depth_input_codes`` lets a caller feed the depth transformer's own
+    input prefix a *different* tensor than the temporal transformer's input
+    -- e.g. a trainer that also does stochastic-RVQ prefix regularization
+    (``UpperFaceLowerGTDM3FrozenTemporalRVQTrainer``-style) needs the
+    teacher's depth branch to see the exact same stochastic prefix the
+    student's depth branch was conditioned on, not the canonical codes,
+    otherwise the KL would confound "future context" with "which RVQ
+    prefix variant was used". Defaults to ``input_codes`` when omitted,
+    which reproduces this function's original (pre-RVQ) behavior exactly.
 
     Returns ``(teacher_temp_logits, teacher_depth_logits)`` with the same
     shapes ``GTemporalDepthModel3.forward`` produces for its temporal/depth
@@ -112,8 +123,15 @@ def forward_teacher_view(
     if not include_depth_levels:
         return teacher_temp_logits, None
 
-    B, K, T = input_codes.shape
-    dep_inpseq = input_codes
+    dep_inpseq = (
+        depth_input_codes if depth_input_codes is not None else input_codes
+    )
+    if dep_inpseq.shape != input_codes.shape:
+        raise ValueError(
+            "depth_input_codes must match input_codes' shape, got "
+            f"{tuple(dep_inpseq.shape)} and {tuple(input_codes.shape)}."
+        )
+    _, _, T = input_codes.shape
     depth_padding_mask = dep_inpseq == model.pad_token_id
     dep_sum_condition = sum_condition.unsqueeze(1).expand(-1, T)
     ca_query_padding_mask = (

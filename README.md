@@ -415,6 +415,35 @@ cross-attention mask is toggled and restored correctly, that the teacher
 forward pass is gradient-free, and that the resulting loss backpropagates
 into both the temporal and depth transformers.
 
+##### + the kinematic transformer's stochastic-RVQ training strategy
+
+`UpperFaceLowerGTDM3SharedRegretRVQTrainer` additionally reuses the
+kinematic/depth training strategy from `UpperFaceLowerGTDM3FrozenTemporalRVQTrainer`
+(coherent stochastic RVQ input prefixes plus a hard/soft-CE mixture against a
+distance-aware top-k target distribution for the depth levels) -- but without
+freezing the temporal transformer. q0 stays an ordinary trainable head with
+plain hard CE; only k=1..K-1 get the stochastic-RVQ treatment. Because the
+depth transformer's input prefix is stochastic during training, the
+GlobalRegret teacher's depth branch is conditioned on that same sampled
+prefix (not the canonical codes) rather than the temporal branch's plain
+`input_codes`, so the regret KL reflects future context only, not which RVQ
+prefix variant was used; validation is unaffected since RVQ sampling is
+train-only there too.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 \
+python scripts/train.py \
+    --config configs/gtdm3_sharedregretrvq_global_audiotext_ufl_25_beatx_small.yaml \
+    --wandb True --wandb_mode online \
+    --wandb_project miburi --wandb_group student-sharedregretrvq-global
+```
+
+Reuses the existing `kinematic_rvq_*` args unchanged; no `--frozen_temporal_ckpt`
+is needed or accepted. `scripts/smoke_test_gesture_lm_shared_regret.py` also
+covers the composition-specific piece: that `depth_input_codes` only changes
+the teacher's depth branch (never the temporal branch), and that a mismatched
+shape is rejected.
+
 #### Experimental three-q0 global-C2F Gesture LM
 
 The opt-in C2F variant is separate from the released GTDM3 model and config.

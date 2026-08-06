@@ -164,13 +164,93 @@ def test_regret_backward_touches_temporal_and_depth_student_paths():
     )
 
 
+def test_teacher_view_depth_input_codes_override_is_isolated_to_depth():
+    """A distinct depth_input_codes only changes the depth branch.
+
+    Regression test for the SharedRegretRVQ composition: the teacher's
+    depth branch must be able to see a different prefix (e.g. a stochastic
+    RVQ sample) than the temporal branch, without that override leaking
+    into (or being ignored by) the temporal logits.
+    """
+
+    model = _make_model()
+    codes, audio, text, speaker = _batch()
+
+    default_temp_logits, default_depth_logits = forward_teacher_view(
+        model,
+        input_codes=codes,
+        audio_codes=audio,
+        text_codes=text,
+        sum_condition=speaker,
+        include_depth_levels=True,
+    )
+    explicit_same_temp_logits, explicit_same_depth_logits = forward_teacher_view(
+        model,
+        input_codes=codes,
+        audio_codes=audio,
+        text_codes=text,
+        sum_condition=speaker,
+        include_depth_levels=True,
+        depth_input_codes=codes,
+    )
+    torch.testing.assert_close(
+        default_temp_logits, explicit_same_temp_logits,
+    )
+    torch.testing.assert_close(
+        default_depth_logits, explicit_same_depth_logits,
+    )
+
+    card = model.card
+    perturbed_codes = torch.remainder(codes + 1, card)
+    perturbed_temp_logits, perturbed_depth_logits = forward_teacher_view(
+        model,
+        input_codes=codes,
+        audio_codes=audio,
+        text_codes=text,
+        sum_condition=speaker,
+        include_depth_levels=True,
+        depth_input_codes=perturbed_codes,
+    )
+    # Temporal branch never sees depth_input_codes at all.
+    torch.testing.assert_close(default_temp_logits, perturbed_temp_logits)
+    # Depth branch's input prefix changed, so its logits must differ.
+    assert not torch.allclose(
+        default_depth_logits, perturbed_depth_logits, atol=1e-6,
+    )
+
+
+def test_teacher_view_rejects_mismatched_depth_input_codes_shape():
+    model = _make_model()
+    codes, audio, text, speaker = _batch()
+    wrong_shape = codes[:, :, :-1]
+    try:
+        forward_teacher_view(
+            model,
+            input_codes=codes,
+            audio_codes=audio,
+            text_codes=text,
+            sum_condition=speaker,
+            include_depth_levels=True,
+            depth_input_codes=wrong_shape,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "expected ValueError for mismatched depth_input_codes shape"
+        )
+
+
 if __name__ == "__main__":
     test_context_manager_toggles_and_restores_causal()
     test_teacher_view_is_gradient_free_and_differs_from_student()
     test_dense_regret_kl_direction_stopgrad_and_missing_codebooks()
     test_regret_backward_touches_temporal_and_depth_student_paths()
+    test_teacher_view_depth_input_codes_override_is_isolated_to_depth()
+    test_teacher_view_rejects_mismatched_depth_input_codes_shape()
     print(
         "Shared-regret smoke tests passed (mask toggle/restore, "
         "gradient-free teacher view, dense KL direction/stop-gradient, "
-        "temporal+depth student gradients)."
+        "temporal+depth student gradients, depth_input_codes override "
+        "isolation, shape validation)."
     )

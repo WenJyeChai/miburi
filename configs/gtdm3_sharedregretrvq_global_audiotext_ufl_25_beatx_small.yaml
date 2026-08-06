@@ -1,0 +1,112 @@
+# Same causal good-speaker student + self-distilled bidirectional
+# (GlobalRegret) teacher view as gtdm3_sharedregret_global_..._small.yaml,
+# plus the kinematic/depth transformer's stochastic-RVQ training strategy
+# from UpperFaceLowerGTDM3FrozenTemporalRVQTrainer -- but WITHOUT freezing
+# the temporal transformer. q0 stays an ordinary trainable head with plain
+# hard CE; only k=1..K-1 get the coherent stochastic RVQ prefix + hard/soft
+# CE mixture. The GlobalRegret teacher's depth branch is conditioned on the
+# same stochastic prefix the student's depth branch sees during training
+# (see UpperFaceLowerGTDM3SharedRegretRVQTrainer._teacher_depth_input_codes),
+# so the KL reflects future-context only, not prefix choice.
+project_name: gtdm3_sharedregretrvq_global_goodspk_beatx_bf16
+
+is_train: True
+ddp: False
+
+beatx_data_path: datasets/beat_english_v2.0.0/
+embody3d_path: datasets/embody_3d_aiagent/
+deps_path: assets_dep/
+
+cache_path: datasets/data_cache/embody3d_dyadic/database.hdf5
+beatx_cache_path: datasets/data_cache/beatx/database.hdf5
+embody3d_cache_path: datasets/data_cache/embody3d_dyadic/database.hdf5
+
+lowerbodycodec_ckpt: experiments/demoexp_release_lowercodec/last_440.safetensors
+upperbodycodec_ckpt: experiments/demoexp_release_uppercodec/last_180.safetensors
+facecodec_ckpt: experiments/demoexp_release_facecodec/last_100.safetensors
+
+is_continue: False
+out_path: ./experiments/
+dataset: unified
+pose_norm: False
+body_part: full
+
+motion_fps: 25
+lowertrans_nfeats: 61
+upperlower_nfeats: 258
+face_nfeats: 106
+
+random_seed: 2342
+pose_length: 250
+frame_chunk_size: 2
+audio_sr: 24000
+audio_fps: 24000
+
+gestureformer_layers: 4
+gestureformer_heads: 2
+gestureformer_depformer_layers: 2
+gestureformer_depformer_heads: 1
+
+transformer_layers: 8
+convblock_layers: 2
+transformer_heads: 4
+num_temp_classifiers: 1
+param_dtype: "bfloat16"
+optim_dtype: "float32"
+
+batch_size: 128
+lr_base: 1e-4
+loader_workers: 16
+grad_norm: 1.0
+opt: adamw
+lr_policy: step
+
+pretrain_warmup_epochs: 50
+inputtoken_noise_prob: 0
+memory_dropout_prob: 0.1
+memory_embnoise_prob: 0
+
+drop_lower_crossattn: True
+lower_bodypart_dropprob: 0.1
+
+gan_loss_weight: 0.0
+contrastive_loss_weight: 0.1
+genrecon_loss_weight: 0.0
+vad_guidance: True
+vad_use_face_logits: True
+vad_loss_weight: 0.05
+
+trainer: UpperFaceLowerGTDM3SharedRegretRVQ
+face_loss_weight: 2.5
+dataset_ratio: goodspk_beatx_lowervalid
+
+textaudio_emb_freeze: False
+varying_frame_length: False
+align_first_frame_yaw: True
+
+# GlobalRegret hyperparameters (unchanged from the plain SharedRegret config).
+regret_temperature: 1.0
+regret_weight: 1.0
+regret_initial_weight: 0.1
+regret_ramp_epochs: 15
+regret_include_depth_levels: True
+regret_start_epoch: 50
+
+# Kinematic-transformer stochastic RVQ hyperparameters. Unlike the
+# frozentemporal_rvqdepth phase-2 config (which starts these at epoch 0
+# because its depth path is freshly initialized against an already-converged
+# temporal path), everything here trains jointly from scratch, so RVQ
+# regularization starts at the same epoch causal warmup ends.
+kinematic_rvq_topk: 8
+kinematic_rvq_temperature: 0.5
+kinematic_rvq_sample_probability: 0.15
+kinematic_rvq_soft_target_weight: 0.5
+kinematic_rvq_start_epoch: 50
+kinematic_rvq_ramp_epochs: 50
+kinematic_rvq_distance_chunk_size: 4096
+
+epochs: 10000
+decay_epochs: 2000
+test_period: 250
+decay_rate: 0.8
+log_period: 10

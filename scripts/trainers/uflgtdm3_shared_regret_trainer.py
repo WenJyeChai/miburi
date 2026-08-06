@@ -184,6 +184,20 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         )
         return initial + (maximum - initial) * progress
 
+    def _teacher_depth_input_codes(self, split, input_codes):
+        """Extension point: which prefix feeds the teacher's depth branch.
+
+        Defaults to the same ``input_codes`` the temporal branch uses
+        (this trainer's own behavior). A subclass that also regularizes the
+        depth transformer's input prefix (e.g. stochastic-RVQ sampling)
+        should override this to return that same prefix here, so the
+        teacher and student depth branches are conditioned on identical
+        inputs and the KL only reflects future-context, not prefix choice.
+        """
+
+        del split
+        return input_codes
+
     def _build_ca_depth_padding_mask(self, gesture_tokens):
         if not getattr(self.args, "drop_lower_crossattn", False):
             return None
@@ -327,6 +341,9 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
             sum_condition=sum_condition,
             ca_depth_padding_mask=ca_depth_padding_mask,
             include_depth_levels=self.regret_include_depth_levels,
+            depth_input_codes=self._teacher_depth_input_codes(
+                split, input_codes,
+            ),
         )
         if self.regret_include_depth_levels:
             teacher_logits = torch.cat(
