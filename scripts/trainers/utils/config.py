@@ -147,6 +147,21 @@ def parse_args():
             "scratch training."
         ),
     )
+    # Shared-weight GlobalRegret (UpperFaceLowerGTDM3SharedRegretTrainer).
+    # Reuses regret_temperature/regret_weight/regret_initial_weight/
+    # regret_ramp_epochs/regret_start_epoch above; no teacher checkpoint or
+    # reset-future cache is required since the teacher view is the same
+    # weights under a relaxed cross-attention mask.
+    parser.add(
+        "--regret_include_depth_levels",
+        default=True,
+        type=str2bool,
+        help=(
+            "Also distill the K-1 kinematic/depth RVQ levels (not just q0) "
+            "by feeding the depth transformer the teacher's temporal hidden "
+            "state instead of the student's. Default on."
+        ),
+    )
     parser.add(
         "--frozen_temporal_ckpt",
         default=None,

@@ -28,6 +28,11 @@ from .gesture_lm_regret import (
     is_temporal_q0_state_key,
     retain_temporal_q0_only,
 )
+from .gesture_lm_shared_regret import (
+    dense_regret_kl,
+    forward_teacher_view,
+    relaxed_temporal_cross_attention,
+)
 from .gesture_lm_reset_future import (
     ResetFutureBoundary,
     ResetSuffixEncoding,

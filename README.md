@@ -384,6 +384,37 @@ checkpoint and reset cache must use the same five-token guard and suffix mode.
 The student trains with causal CE from scratch; q0 forward-KL distillation
 starts at epoch 50 and ramps from alpha 0.1 to 1.0 over 15 epochs.
 
+#### Shared-weight GlobalRegret (no separate teacher run)
+
+`UpperFaceLowerGTDM3SharedRegretTrainer` implements the dual-view mechanism
+literally: the causal student and its future-aware teacher are the *same*
+weights, differing only in the temporal transformer's audio/text
+cross-attention mask (relaxed to bidirectional for one extra, gradient-free
+forward pass per step). There is no `--regret_teacher_ckpt`, no
+reset-future cache, and no prior teacher-pretraining run to manage. It also
+distills every RVQ level rather than q0 alone, since the kinematic/depth
+transformer is shared weights too and picks up a teacher-view distribution
+for free by conditioning on the teacher's temporal hidden state instead of
+the student's:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 \
+python scripts/train.py \
+    --config configs/gtdm3_sharedregret_global_audiotext_ufl_25_beatx_small.yaml \
+    --wandb True --wandb_mode online \
+    --wandb_project miburi --wandb_group student-sharedregret-global
+```
+
+Only GlobalRegret (full-clip bidirectional cross-attention) is implemented;
+LocalRegret's one-step lookahead is left as follow-up work since it needs an
+actual attention-bias primitive rather than the `causal` boolean toggle this
+trainer uses. Set `--regret_include_depth_levels False` to restrict
+distillation to q0 only, matching the scope of the frozen-teacher trainer
+above. `scripts/smoke_test_gesture_lm_shared_regret.py` checks the
+cross-attention mask is toggled and restored correctly, that the teacher
+forward pass is gradient-free, and that the resulting loss backpropagates
+into both the temporal and depth transformers.
+
 #### Experimental three-q0 global-C2F Gesture LM
 
 The opt-in C2F variant is separate from the released GTDM3 model and config.
