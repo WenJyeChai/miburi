@@ -30,8 +30,10 @@ from .gesture_lm_regret import (
 )
 from .gesture_lm_shared_regret import (
     dense_regret_kl,
+    forward_masked_target_teacher_view,
     forward_teacher_view,
     relaxed_temporal_cross_attention,
+    relaxed_temporal_self_attention,
 )
 from .gesture_lm_reset_future import (
     ResetFutureBoundary,

@@ -444,6 +444,43 @@ covers the composition-specific piece: that `depth_input_codes` only changes
 the teacher's depth branch (never the temporal branch), and that a mismatched
 shape is rejected.
 
+##### + sparse future-gesture regret (optional, off by default)
+
+Both `UpperFaceLowerGTDM3SharedRegretTrainer` and its RVQ subclass also
+support a second, independent regret term: a masked-target, bidirectional
+gesture-*self*-attention teacher view, complementary to the dense
+speech/text one above. One selected timestep per sample has its input
+tokens hidden (`--sparse_future_gesture_horizon_tokens`, default 1 -- masks
+only the literal target token, mirroring the paper's own Eq. 17 masking
+applied to the gesture stream); gesture self-attention is relaxed to
+bidirectional for that call so the hidden position can see the intact true
+future beyond the guard, while cross-attention to audio/text stays causal,
+so this term's signal isn't conflated with the dense one. It is off by
+default (`--sparse_future_gesture_weight 0`) -- enabling it adds a second
+extra forward pass and rides the same ramp shape as `regret_alpha`
+(`regret_start_epoch`/`regret_ramp_epochs`), rescaled to its own weight:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 \
+python scripts/train.py \
+    --config configs/gtdm3_sharedregret_global_audiotext_ufl_25_beatx_small.yaml \
+    --sparse_future_gesture_weight 1.0 \
+    --wandb True --wandb_mode online \
+    --wandb_project miburi --wandb_group student-sharedregret-global-fg
+```
+
+Unlike the reset-future trainers' privileged views, this one makes **no**
+attempt to prevent the causal gesture codec's own receptive field from
+leaking information about the guarded interval into tokens just beyond it
+-- it's a deliberately cheap, maximally-permissive upper-bound check for
+whether future gesture information helps at all before paying for the
+leak-safe (reset-encoded) version those trainers use. `sparse_fg_*` metrics
+(mirroring the dense term's `regret_*` diagnostics) are logged separately so
+this signal's effect can be read independently of the dense term's.
+`scripts/smoke_test_gesture_lm_shared_regret.py` covers the self-attention
+mask toggle/restore (including that cross-attention is left untouched) and
+that this teacher view is gradient-free.
+
 #### Experimental three-q0 global-C2F Gesture LM
 
 The opt-in C2F variant is separate from the released GTDM3 model and config.

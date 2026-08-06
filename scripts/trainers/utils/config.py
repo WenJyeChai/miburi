@@ -162,6 +162,37 @@ def parse_args():
             "state instead of the student's. Default on."
         ),
     )
+    # Sparse, masked-target future-gesture regret (UpperFaceLowerGTDM3SharedRegret*).
+    # Complementary to the dense speech/text GlobalRegret above: relaxes
+    # gesture self-attention instead of cross-attention, for one selected
+    # timestep per sample, isolating future *gesture* information. Off by
+    # default (weight 0); rides regret_alpha's ramp, rescaled to its own
+    # weight, rather than a separate schedule.
+    parser.add(
+        "--sparse_future_gesture_weight",
+        default=0.0,
+        type=float,
+        help=(
+            "Final alpha for the sparse future-gesture regret term. Zero "
+            "(default) disables it entirely -- no extra forward pass, no "
+            "cost. Nonzero rides the same ramp shape as regret_alpha "
+            "(regret_start_epoch/regret_ramp_epochs/regret_initial_weight), "
+            "rescaled to this weight instead of regret_weight."
+        ),
+    )
+    parser.add(
+        "--sparse_future_gesture_horizon_tokens",
+        default=1,
+        type=int,
+        help=(
+            "Guard width (in gesture tokens) hidden at the selected target "
+            "position before the intact ground-truth future becomes "
+            "visible to the masked-target teacher view. One (default) "
+            "masks only the literal target token -- a cheap, "
+            "leak-permissive upper-bound check, not the leak-safe "
+            "reset-encoded view the reset-future trainers use."
+        ),
+    )
     parser.add(
         "--frozen_temporal_ckpt",
         default=None,

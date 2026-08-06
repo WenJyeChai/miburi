@@ -5,8 +5,10 @@ import torch
 from miburi.models.gesture_lm import GTemporalDepthModel3
 from miburi.models.gesture_lm_shared_regret import (
     dense_regret_kl,
+    forward_masked_target_teacher_view,
     forward_teacher_view,
     relaxed_temporal_cross_attention,
+    relaxed_temporal_self_attention,
 )
 from scripts.smoke_test_gesture_lm_offline import _batch, _model_kwargs
 
@@ -241,6 +243,108 @@ def test_teacher_view_rejects_mismatched_depth_input_codes_shape():
         )
 
 
+def test_self_attention_context_manager_toggles_and_restores():
+    model = _make_model()
+    self_attns = [
+        layer.self_attn for layer in model.temporal_transformer.layers
+    ]
+    assert len(self_attns) > 0
+    assert all(sa.causal for sa in self_attns)
+
+    with relaxed_temporal_self_attention(model.temporal_transformer):
+        assert all(not sa.causal for sa in self_attns)
+        # Cross-attention is a different mechanism and must stay untouched.
+        assert all(
+            ca.causal
+            for layer in model.temporal_transformer.layers
+            for ca in layer.cross_attns
+        )
+
+    assert all(sa.causal for sa in self_attns)
+
+    try:
+        with relaxed_temporal_self_attention(model.temporal_transformer):
+            assert all(not sa.causal for sa in self_attns)
+            raise RuntimeError("simulated failure mid-masked-target-pass")
+    except RuntimeError:
+        pass
+    assert all(sa.causal for sa in self_attns), (
+        "self-attention causal flags must be restored even when the "
+        "masked-target teacher pass raises"
+    )
+
+
+def test_masked_target_teacher_view_is_gradient_free_and_isolated():
+    """No grad, and neither attention flag leaks past the call."""
+
+    model = _make_model().train()
+    codes, audio, text, speaker = _batch()
+    target_times = torch.tensor([1, 2])
+
+    teacher_temp_logits, teacher_depth_logits = (
+        forward_masked_target_teacher_view(
+            model,
+            input_codes=codes,
+            target_codes=codes,
+            target_times=target_times,
+            audio_codes=audio,
+            text_codes=text,
+            sum_condition=speaker,
+            horizon_tokens=1,
+            past_context_tokens=4,
+            mask_token_id=model.pad_token_id,
+            include_depth_levels=True,
+        )
+    )
+    assert not teacher_temp_logits.requires_grad
+    assert not teacher_depth_logits.requires_grad
+    assert teacher_temp_logits.grad_fn is None
+    assert teacher_depth_logits.grad_fn is None
+
+    assert all(
+        layer.self_attn.causal
+        for layer in model.temporal_transformer.layers
+    )
+    assert all(
+        ca.causal
+        for layer in model.temporal_transformer.layers
+        for ca in layer.cross_attns
+    )
+
+
+def test_masked_target_teacher_view_differs_from_causal_student():
+    model = _make_model().train()
+    codes, audio, text, speaker = _batch()
+    target_times = torch.tensor([1, 2])
+
+    teacher_temp_logits, _ = forward_masked_target_teacher_view(
+        model,
+        input_codes=codes,
+        target_codes=codes,
+        target_times=target_times,
+        audio_codes=audio,
+        text_codes=text,
+        sum_condition=speaker,
+        horizon_tokens=1,
+        past_context_tokens=4,
+        mask_token_id=model.pad_token_id,
+        include_depth_levels=False,
+    )
+    student_logits = model(
+        codes,
+        audio_codes=audio,
+        text_codes=text,
+        sum_condition=speaker,
+    )
+    student_temp_logits = student_logits[:, :1]
+    assert not torch.allclose(
+        teacher_temp_logits, student_temp_logits, atol=1e-6,
+    ), (
+        "bidirectional self-attention over a masked-target sequence should "
+        "not coincide with the plain causal student's q0 logits"
+    )
+
+
 if __name__ == "__main__":
     test_context_manager_toggles_and_restores_causal()
     test_teacher_view_is_gradient_free_and_differs_from_student()
@@ -248,9 +352,13 @@ if __name__ == "__main__":
     test_regret_backward_touches_temporal_and_depth_student_paths()
     test_teacher_view_depth_input_codes_override_is_isolated_to_depth()
     test_teacher_view_rejects_mismatched_depth_input_codes_shape()
+    test_self_attention_context_manager_toggles_and_restores()
+    test_masked_target_teacher_view_is_gradient_free_and_isolated()
+    test_masked_target_teacher_view_differs_from_causal_student()
     print(
         "Shared-regret smoke tests passed (mask toggle/restore, "
         "gradient-free teacher view, dense KL direction/stop-gradient, "
         "temporal+depth student gradients, depth_input_codes override "
-        "isolation, shape validation)."
+        "isolation, shape validation, self-attention relaxation, "
+        "masked-target teacher view)."
     )
