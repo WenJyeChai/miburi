@@ -369,6 +369,7 @@ class GTemporalDepthModel3(StreamingContainer):
             text_codes: torch.Tensor,
             sum_condition: torch.Tensor | None = None,
             ca_depth_padding_mask: torch.Tensor | None = None,
+            depth_input_codes: torch.Tensor | None = None,
             temporal_input_codes: torch.Tensor | None = None,
             temporal_include_last_input: bool = False,
             temporal_key_padding_mask: torch.Tensor | None = None,
@@ -385,6 +386,14 @@ class GTemporalDepthModel3(StreamingContainer):
             raise ValueError(
                 "temporal_input_codes must match codes, got "
                 f"{tuple(temporal_input_codes.shape)} and "
+                f"{tuple(codes.shape)}."
+            )
+        if depth_input_codes is None:
+            depth_input_codes = codes
+        if depth_input_codes.shape != codes.shape:
+            raise ValueError(
+                "depth_input_codes must match codes, got "
+                f"{tuple(depth_input_codes.shape)} and "
                 f"{tuple(codes.shape)}."
             )
         initial = self._get_initial_token().expand(B, K, -1)
@@ -440,7 +449,7 @@ class GTemporalDepthModel3(StreamingContainer):
         # dep_initial = input_sequence[:, :, 1:]
         # The kinematic/depth transformer must retain true within-frame
         # teacher-forcing prefixes even when the temporal input is masked.
-        dep_inpseq = codes
+        dep_inpseq = depth_input_codes
         depth_padding_mask = (dep_inpseq == self.pad_token_id)
 
         dep_sum_condition = sum_condition.unsqueeze(1).expand(-1, T)

@@ -147,6 +147,60 @@ def parse_args():
             "scratch training."
         ),
     )
+    parser.add(
+        "--frozen_temporal_ckpt",
+        default=None,
+        type=str,
+        help=(
+            "Checkpoint supplying only the frozen temporal q0 path for "
+            "UpperFaceLowerGTDM3FrozenTemporalRVQ."
+        ),
+    )
+    parser.add("--kinematic_rvq_topk", default=8, type=int)
+    parser.add(
+        "--kinematic_rvq_temperature",
+        default=0.5,
+        type=float,
+        help=(
+            "Temperature over normalized top-k codec-distance gaps used "
+            "for stochastic RVQ paths and soft targets."
+        ),
+    )
+    parser.add(
+        "--kinematic_rvq_sample_probability",
+        default=0.15,
+        type=float,
+        help=(
+            "Final probability of accepting a distance-sampled code rather "
+            "than the nearest code at each RVQ position."
+        ),
+    )
+    parser.add(
+        "--kinematic_rvq_soft_target_weight",
+        default=0.5,
+        type=float,
+        help="Final interpolation weight for distance-aware soft CE.",
+    )
+    parser.add(
+        "--kinematic_rvq_start_epoch",
+        default=0,
+        type=int,
+    )
+    parser.add(
+        "--kinematic_rvq_ramp_epochs",
+        default=50,
+        type=int,
+        help=(
+            "Epochs used to ramp both stochastic sampling and soft-target "
+            "weights from zero to their configured values."
+        ),
+    )
+    parser.add(
+        "--kinematic_rvq_distance_chunk_size",
+        default=4096,
+        type=int,
+        help="Maximum residual vectors in one codebook-distance matrix.",
+    )
     parser.add("--save", default=False, type=str2bool,
                help="When running scripts/test.py, also write per-sample "
                     "gt.npz / pred.npz / upper_tokens.npz (and the codec "

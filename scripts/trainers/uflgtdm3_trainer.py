@@ -199,6 +199,95 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
         """
         return {}
 
+    def encode_training_gesture_codes(
+        self,
+        codec_motion_inputs,
+        *,
+        epoch,
+        iteration,
+    ):
+        """Encode motion and optionally retain depth-training metadata.
+
+        Model variants can override this to create alternative, coherent RVQ
+        paths without running the motion encoders a second time.  The released
+        trainer keeps its original deterministic codec encoding.
+        """
+
+        del epoch, iteration
+        upper_motion, lower_motion, face_motion = codec_motion_inputs
+        return (
+            self.upper_gesture_codec.encode(upper_motion),
+            self.lower_gesture_codec.encode(lower_motion),
+            self.face_gesture_codec.encode(face_motion),
+        ), {}
+
+    def prepare_kinematic_training_inputs(
+        self,
+        input_codes,
+        target_codes,
+        token_loss_mask,
+        *,
+        epoch,
+        iteration,
+        encoding_context,
+        **batch_context,
+    ):
+        """Optionally separate depth prefixes/targets from temporal codes.
+
+        ``None`` for depth inputs makes the model use ``input_codes``, which
+        is the exact released-MIBURI behavior.  The context is passed to the
+        CE hook below and otherwise ignored.
+        """
+
+        del epoch, iteration, batch_context
+        return None, target_codes, token_loss_mask, encoding_context
+
+    def compute_training_ce_objective(
+        self,
+        logits,
+        target_codes,
+        token_loss_mask,
+        *,
+        loss_context,
+    ):
+        """Compute the released per-codebook hard-CE objective."""
+
+        del loss_context
+        ce_loss = 0
+        B, K, T, card = logits.shape
+        upper_loss = 0
+        lower_loss = 0
+        face_loss = 0
+
+        for k in range(K):
+            loss_k = F.cross_entropy(
+                logits[:, k].reshape(B * T, card),
+                target_codes[:, k].reshape(B * T),
+                reduction="none",
+            )
+            loss_k = loss_k * token_loss_mask[:, k].reshape(B * T)
+            loss = loss_k.sum() / (
+                token_loss_mask[:, k].sum() + 1e-12
+            )
+            loss_k = loss * (1 / K)
+
+            if k < 8:
+                upper_loss += loss_k.item()
+            elif k < 16:
+                lower_loss += loss_k.item()
+            else:
+                face_loss += loss_k.item()
+                loss_k = loss_k * self.args.face_loss_weight
+
+            ce_loss += loss_k
+
+        return ce_loss, upper_loss, lower_loss, face_loss
+
+    def configure_train_mode(self):
+        """Hook called immediately after the main model enters train mode."""
+
+        return None
+
     def prepare_temporal_teacher_inputs(
         self,
         input_codes,
@@ -565,6 +654,7 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
         self.face_gesture_codec.eval()
 
         self.model.train()
+        self.configure_train_mode()
         t_start = time.time()
         self.tracker.reset()
         if self.args.is_continue and epoch != 0:
@@ -778,9 +868,18 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
             # breakpoint()
             with torch.no_grad():
                 # breakpoint()
-                upper_codes = self.upper_gesture_codec.encode(in_tar_pose_upper) # B x K=8 x T=25
-                lower_codes = self.lower_gesture_codec.encode(in_tar_pose_lower) # B x K=8 x T=25
-                face_codes = self.face_gesture_codec.encode(in_tar_pose_face) # B x K=4 x T=25
+                (
+                    (upper_codes, lower_codes, face_codes),
+                    kinematic_encoding_context,
+                ) = self.encode_training_gesture_codes(
+                    (
+                        in_tar_pose_upper,
+                        in_tar_pose_lower,
+                        in_tar_pose_face,
+                    ),
+                    epoch=epoch,
+                    iteration=its,
+                )
                 # if len(seamless_indices) > 0: breakpoint() # check lower codes for beatx samples
                 lower_codes[seamless_indices] = self.modelout_ignore_index # set to pad token for seamless interaction samples
                 face_codes[seamless_indices] = self.modelout_ignore_index # set to pad token for seamless interaction samples
@@ -831,16 +930,31 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
             in_gesture_tokens = torch.cat((upper_codes, masked_lower_codes, masked_face_codes), dim=1) 
 
             (
+                depth_input_codes,
+                training_target_codes,
+                training_token_loss_mask,
+                kinematic_loss_context,
+            ) = self.prepare_kinematic_training_inputs(
+                in_gesture_tokens,
+                gesture_tokens,
+                pad_loss_mask,
+                epoch=epoch,
+                iteration=its,
+                encoding_context=kinematic_encoding_context,
+                sample_ids=dict_data.get("filechunk_id"),
+            )
+
+            (
                 temporal_input_codes,
                 audio_codes,
                 text_codes,
                 token_loss_mask,
             ) = self.prepare_temporal_teacher_inputs(
                 in_gesture_tokens,
-                gesture_tokens,
+                training_target_codes,
                 audio_codes,
                 text_codes,
-                pad_loss_mask,
+                training_token_loss_mask,
                 split="train",
                 epoch=epoch,
                 iteration=its,
@@ -862,8 +976,12 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
             model_forward_kwargs = self.get_model_forward_kwargs(
                 epoch,
                 its,
-                target_codes=gesture_tokens,
+                target_codes=training_target_codes,
             )
+            if depth_input_codes is not None:
+                model_forward_kwargs["depth_input_codes"] = (
+                    depth_input_codes
+                )
             if temporal_input_codes is not None:
                 model_forward_kwargs["temporal_input_codes"] = (
                     temporal_input_codes
@@ -887,38 +1005,17 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
             # TODO: Change loss 
             logits = model_out #.logits
 
-            ce_loss = 0
-            B, K, T, card = logits.shape
-            upper_loss = 0
-            lower_loss = 0
-            face_loss = 0
-            
-            # breakpoint() # check K 
-            for k in range(K):
-                loss_k = F.cross_entropy(
-                    logits[:, k].reshape(B*T, card),
-                    gesture_tokens[:, k].reshape(B*T), 
-                    reduction="none"
-                )
-                # breakpoint() # check pad_mask
-                loss_k = loss_k * token_loss_mask[:, k].reshape(B*T)
-                loss = loss_k.sum() / (token_loss_mask[:, k].sum() + 1e-12)
-                loss_k = loss * (1/K)
-
-                if k < 8:  # upper body + hands
-                    upper_loss += loss_k.item()
-                elif k >=8 and k < 16:   # face + expressions
-                    lower_loss += loss_k.item()
-                else:  # lower body
-                    face_loss += loss_k.item()
-                    loss_k = loss_k * self.args.face_loss_weight # upweight face loss
-                
-                ce_loss += loss_k
-
-            ce_loss = ce_loss #/ K
-            upper_loss = upper_loss #/ (K/2)
-            lower_loss = lower_loss #/ (K/2)
-            face_loss = face_loss #/ (K/4)
+            (
+                ce_loss,
+                upper_loss,
+                lower_loss,
+                face_loss,
+            ) = self.compute_training_ce_objective(
+                logits,
+                training_target_codes,
+                token_loss_mask,
+                loss_context=kinematic_loss_context,
+            )
 
             g_loss_final += ce_loss
             self.tracker.update_meter("ce_loss", "train", ce_loss.item())
@@ -928,7 +1025,7 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
             
             perplexity = self.calculate_perplexity(
                 logits, 
-                gesture_tokens, 
+                training_target_codes,
                 pad_token_id=self.modelout_ignore_index,
                 loss_mask=token_loss_mask,
             )
@@ -1320,7 +1417,7 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
             
             additional_loss = self.get_additional_training_loss(
                 logits,
-                gesture_tokens,
+                training_target_codes,
                 token_loss_mask,
                 epoch,
                 its,

@@ -41,6 +41,10 @@ _TRAINER_IMPORTS = (
         ".uflgtdm3_reset_future_trainer",
         "UpperFaceLowerGTDM3ResetFutureTrainer",
     ),
+    (
+        ".uflgtdm3_frozen_temporal_rvq_trainer",
+        "UpperFaceLowerGTDM3FrozenTemporalRVQTrainer",
+    ),
 )
 
 for _module_name, _cls_name in _TRAINER_IMPORTS:

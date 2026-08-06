@@ -36,3 +36,7 @@ from .gesture_lm_reset_future import (
     encode_intact_motion,
     encode_reset_suffix,
 )
+from .rvq_depth_regularization import (
+    StochasticRVQEncoding,
+    encode_stochastic_rvq,
+)

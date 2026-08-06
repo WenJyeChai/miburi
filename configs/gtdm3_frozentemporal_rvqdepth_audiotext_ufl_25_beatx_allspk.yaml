@@ -1,0 +1,105 @@
+# Phase 2: retain the causal temporal q0 path from the selected regret student,
+# initialize a fresh MIBURI kinematic/depth path, and train only that path.
+project_name: gtdm3_frozentemporal_rvqdepth_allspk_beatx_bf16
+
+is_train: True
+ddp: False
+
+beatx_data_path: datasets/beat_english_v2.0.0/
+embody3d_path: datasets/embody_3d_aiagent/
+deps_path: assets_dep/
+
+cache_path: datasets/data_cache/embody3d_dyadic/database.hdf5
+beatx_cache_path: datasets/data_cache/beatx_gtdm3/database.hdf5
+embody3d_cache_path: datasets/data_cache/embody3d_dyadic/database.hdf5
+
+# These are the all-speaker codec checkpoints used by both the teacher and
+# regret-student runs. No HDF5 rebuild is required.
+lowerbodycodec_ckpt: experiments/allspk_release_lowertranscodec/last_705.safetensors
+upperbodycodec_ckpt: experiments/allspk_release_uppercodec/last_490.safetensors
+facecodec_ckpt: experiments/allspk_release_facecodec/last_380.safetensors
+
+# This is a source-model import, not continuation: only temporal q0 tensors
+# are copied. The kinematic transformer remains freshly initialized.
+is_continue: False
+frozen_temporal_ckpt: experiments/0805_2046_gtdm3_resetregret400ms_fullsuffix_t120_allspk_beatx_bf16/last_2480.safetensors
+
+out_path: ./experiments/
+dataset: unified
+dataset_ratio: full_beatx_lowervalid
+pose_norm: False
+body_part: full
+
+motion_fps: 25
+lowertrans_nfeats: 61
+upperlower_nfeats: 258
+face_nfeats: 106
+
+random_seed: 2342
+pose_length: 250
+frame_chunk_size: 2
+audio_sr: 24000
+audio_fps: 24000
+
+gestureformer_layers: 4
+gestureformer_heads: 2
+gestureformer_depformer_layers: 2
+gestureformer_depformer_heads: 1
+
+transformer_layers: 8
+convblock_layers: 2
+transformer_heads: 4
+num_temp_classifiers: 1
+param_dtype: bfloat16
+optim_dtype: float32
+
+batch_size: 128
+lr_base: 0.0001
+loader_workers: 16
+grad_norm: 1.0
+opt: adamw
+opt_betas: [0.9, 0.95]
+weight_decay: 0.0
+lr_policy: step
+lr_min: 0.000001
+
+# The imported temporal model has already completed causal pretraining, so it
+# receives real conditions immediately. The new depth path starts from epoch 0.
+pretrain_warmup_epochs: 0
+inputtoken_noise_prob: 0.0
+memory_dropout_prob: 0.1
+memory_embnoise_prob: 0.0
+
+drop_lower_crossattn: True
+lower_bodypart_dropprob: 0.1
+
+# Contrastive latent supervision still trains only the unfrozen kinematic
+# logits. VAD is disabled because its head does not train the depth path.
+gan_loss_weight: 0.0
+contrastive_loss_weight: 0.1
+genrecon_loss_weight: 0.0
+vad_guidance: False
+vad_use_face_logits: False
+vad_loss_weight: 0.0
+
+trainer: UpperFaceLowerGTDM3FrozenTemporalRVQ
+face_loss_weight: 2.5
+textaudio_emb_freeze: False
+varying_frame_length: True
+align_first_frame_yaw: False
+
+# Coherent stochastic RVQ and geometry-aware soft-target schedule. Both ramp
+# gently because the depth transformer itself is freshly initialized.
+kinematic_rvq_topk: 8
+kinematic_rvq_temperature: 0.5
+kinematic_rvq_sample_probability: 0.15
+kinematic_rvq_soft_target_weight: 0.5
+kinematic_rvq_start_epoch: 0
+kinematic_rvq_ramp_epochs: 50
+kinematic_rvq_distance_chunk_size: 4096
+
+epochs: 10000
+decay_epochs: 500
+decay_rate: 0.8
+test_period: 20
+log_period: 25
