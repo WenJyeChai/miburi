@@ -36,6 +36,7 @@ from loguru import logger
 
 from miburi.models import (
     dense_regret_kl,
+    forward_dense_future_gesture_teacher_view,
     forward_masked_target_teacher_view,
     forward_teacher_view,
 )
@@ -152,6 +153,53 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         "teacher_advantage": "sparse_fg_depth_teacher_advantage",
     }
 
+    _DENSE_FG_METRICS = (
+        ("dense_future_gesture_loss", False),
+        ("dense_future_gesture_weighted", False),
+        ("dense_future_gesture_alpha", False),
+        ("dense_fg_teacher_q0_ce", False),
+        ("dense_fg_student_q0_ce", False),
+        ("dense_fg_teacher_q0_acc", True),
+        ("dense_fg_student_q0_acc", True),
+        ("dense_fg_teacher_entropy", False),
+        ("dense_fg_student_entropy", False),
+        ("dense_fg_teacher_gt_prob", True),
+        ("dense_fg_student_gt_prob", True),
+        ("dense_fg_teacher_advantage", True),
+        ("dense_fg_depth_teacher_ce", False),
+        ("dense_fg_depth_student_ce", False),
+        ("dense_fg_depth_teacher_acc", True),
+        ("dense_fg_depth_student_acc", True),
+        ("dense_fg_depth_teacher_entropy", False),
+        ("dense_fg_depth_student_entropy", False),
+        ("dense_fg_depth_teacher_gt_prob", True),
+        ("dense_fg_depth_student_gt_prob", True),
+        ("dense_fg_depth_teacher_advantage", True),
+    )
+
+    _DENSE_FG_Q0_METRIC_NAMES = {
+        "teacher_ce": "dense_fg_teacher_q0_ce",
+        "student_ce": "dense_fg_student_q0_ce",
+        "teacher_acc": "dense_fg_teacher_q0_acc",
+        "student_acc": "dense_fg_student_q0_acc",
+        "teacher_entropy": "dense_fg_teacher_entropy",
+        "student_entropy": "dense_fg_student_entropy",
+        "teacher_gt_prob": "dense_fg_teacher_gt_prob",
+        "student_gt_prob": "dense_fg_student_gt_prob",
+        "teacher_advantage": "dense_fg_teacher_advantage",
+    }
+    _DENSE_FG_DEPTH_METRIC_NAMES = {
+        "teacher_ce": "dense_fg_depth_teacher_ce",
+        "student_ce": "dense_fg_depth_student_ce",
+        "teacher_acc": "dense_fg_depth_teacher_acc",
+        "student_acc": "dense_fg_depth_student_acc",
+        "teacher_entropy": "dense_fg_depth_teacher_entropy",
+        "student_entropy": "dense_fg_depth_student_entropy",
+        "teacher_gt_prob": "dense_fg_depth_teacher_gt_prob",
+        "student_gt_prob": "dense_fg_depth_student_gt_prob",
+        "teacher_advantage": "dense_fg_depth_teacher_advantage",
+    }
+
     def __init__(self, args):
         super().__init__(args)
         self._extend_tracker()
@@ -173,6 +221,12 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         )
         self._validate_sparse_future_gesture_hyperparameters()
 
+        self.dense_future_gesture_weight = float(
+            getattr(args, "dense_future_gesture_weight", 0.0)
+        )
+        if self.dense_future_gesture_weight < 0:
+            raise ValueError("dense_future_gesture_weight cannot be negative.")
+
         logger.info(
             f"[GPU{self.global_rank}:{self.local_rank}] Shared-weight "
             f"GlobalRegret setup: depth_levels="
@@ -192,6 +246,15 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
                 f"{self.sparse_future_gesture_horizon_tokens}; "
                 "cross-attention stays causal in this view."
             )
+        if self.dense_future_gesture_weight > 0:
+            logger.info(
+                f"[GPU{self.global_rank}:{self.local_rank}] Dense "
+                "future-gesture regret enabled: weight="
+                f"{self.dense_future_gesture_weight} (rides the same ramp "
+                "as regret_alpha, rescaled); per-query target-exclusion "
+                "attention bias, every position covered in one pass; "
+                "cross-attention stays causal in this view."
+            )
 
     def _student_model(self):
         return self.model.module if self.args.ddp else self.model
@@ -203,7 +266,10 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
             old_tracker.is_higher_better[name]
             for name in old_tracker.metric_names
         ]
-        for name, direction in self._REGRET_METRICS + self._SPARSE_METRICS:
+        all_metrics = (
+            self._REGRET_METRICS + self._SPARSE_METRICS + self._DENSE_FG_METRICS
+        )
+        for name, direction in all_metrics:
             if name not in names:
                 names.append(name)
                 directions.append(direction)
@@ -300,6 +366,19 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         progress = dense_alpha / dense_maximum
         return progress * self.sparse_future_gesture_weight
 
+    def _dense_future_gesture_alpha(self, epoch: int) -> float:
+        """Rides ``_regret_alpha``'s ramp shape too, rescaled to its own
+        weight -- same rationale as ``_sparse_future_gesture_alpha``."""
+
+        if self.dense_future_gesture_weight <= 0:
+            return 0.0
+        regret_alpha = self._regret_alpha(epoch)
+        regret_maximum = float(self.args.regret_weight)
+        if regret_maximum <= 0:
+            return 0.0
+        progress = regret_alpha / regret_maximum
+        return progress * self.dense_future_gesture_weight
+
     def _teacher_depth_input_codes(self, split, input_codes):
         """Extension point: which prefix feeds the teacher's depth branch.
 
@@ -364,6 +443,19 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
             )
         hashed = (offsets * 48_271 + 1) % 2_147_483_647
         return hashed % (maximum_targets + 1)
+
+    @staticmethod
+    def _valid_position_mask(pad_loss_mask):
+        """``[B, T]`` bool, True == genuine (non-padding) position.
+
+        Derived from q0's own validity (``pad_loss_mask[:, 0, :]``): upper-
+        body codebooks, including q0, are never subject to the lower/face
+        body-part dropout augmentation, so this reliably reflects
+        sequence-length padding rather than intentional per-sample
+        body-part masking.
+        """
+
+        return pad_loss_mask[:, 0, :].bool()
 
     @staticmethod
     def _sparse_position_mask(pad_loss_mask, target_times):
@@ -530,6 +622,48 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
                 name_map=self._SPARSE_DEPTH_METRIC_NAMES,
             )
 
+    def _update_dense_future_gesture_metrics(
+        self,
+        *,
+        split,
+        raw_kl,
+        weighted_kl,
+        alpha,
+        student_logits,
+        teacher_logits,
+        targets,
+        valid_mask,
+    ):
+        self.tracker.update_meter(
+            "dense_future_gesture_loss", split, float(raw_kl.detach().item()),
+        )
+        self.tracker.update_meter(
+            "dense_future_gesture_weighted",
+            split,
+            float(weighted_kl.detach().item()),
+        )
+        self.tracker.update_meter(
+            "dense_future_gesture_alpha", split, float(alpha),
+        )
+
+        self._update_slice_metrics(
+            split,
+            student_logits[:, 0],
+            teacher_logits[:, 0],
+            targets[:, 0],
+            valid_mask[:, 0],
+            name_map=self._DENSE_FG_Q0_METRIC_NAMES,
+        )
+        if student_logits.shape[1] > 1:
+            self._update_slice_metrics(
+                split,
+                student_logits[:, 1:],
+                teacher_logits[:, 1:],
+                targets[:, 1:],
+                valid_mask[:, 1:],
+                name_map=self._DENSE_FG_DEPTH_METRIC_NAMES,
+            )
+
     def _compute_regret(
         self,
         *,
@@ -641,6 +775,7 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
                     self.sparse_future_gesture_past_context_tokens
                 ),
                 mask_token_id=self.modelout_ignore_index,
+                valid_position_mask=self._valid_position_mask(pad_loss_mask),
                 ca_depth_padding_mask=ca_depth_padding_mask,
                 include_depth_levels=self.regret_include_depth_levels,
                 depth_input_codes=self._teacher_depth_input_codes(
@@ -680,6 +815,81 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
             teacher_logits=teacher_logits,
             targets=targets,
             valid_mask=position_mask,
+        )
+        return weighted_kl
+
+    def _compute_dense_future_gesture_regret(
+        self,
+        *,
+        split,
+        logits,
+        gesture_tokens,
+        pad_loss_mask,
+        epoch,
+        input_codes,
+        audio_codes,
+        text_codes,
+        sum_condition,
+        sample_ids=None,
+    ):
+        del sample_ids
+        alpha = self._dense_future_gesture_alpha(epoch)
+        if alpha <= 0:
+            self.tracker.update_meter(
+                "dense_future_gesture_alpha", split, 0.0,
+            )
+            return None
+
+        student = self._student_model()
+        real_vocab = int(self.modelout_ignore_index)
+        ca_depth_padding_mask = self._build_ca_depth_padding_mask(
+            gesture_tokens,
+        )
+        teacher_temp_logits, teacher_depth_logits = (
+            forward_dense_future_gesture_teacher_view(
+                student,
+                input_codes=input_codes,
+                audio_codes=audio_codes,
+                text_codes=text_codes,
+                sum_condition=sum_condition,
+                valid_position_mask=self._valid_position_mask(pad_loss_mask),
+                ca_depth_padding_mask=ca_depth_padding_mask,
+                include_depth_levels=self.regret_include_depth_levels,
+                depth_input_codes=self._teacher_depth_input_codes(
+                    split, input_codes,
+                ),
+            )
+        )
+        if self.regret_include_depth_levels:
+            teacher_logits = torch.cat(
+                [teacher_temp_logits, teacher_depth_logits], dim=1,
+            )
+        else:
+            teacher_logits = teacher_temp_logits
+
+        K = teacher_logits.shape[1]
+        student_logits = logits[:, :K, :, :real_vocab]
+        teacher_logits = teacher_logits[:, :, :, :real_vocab]
+        valid_mask = pad_loss_mask[:, :K].bool()
+        targets = gesture_tokens[:, :K]
+
+        raw_kl = dense_regret_kl(
+            student_logits,
+            teacher_logits,
+            valid_mask,
+            temperature=float(self.args.regret_temperature),
+        )
+        weighted_kl = raw_kl * alpha
+
+        self._update_dense_future_gesture_metrics(
+            split=split,
+            raw_kl=raw_kl,
+            weighted_kl=weighted_kl,
+            alpha=alpha,
+            student_logits=student_logits,
+            teacher_logits=teacher_logits,
+            targets=targets,
+            valid_mask=valid_mask,
         )
         return weighted_kl
 
@@ -740,6 +950,21 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
                     sparse_weighted if total is None
                     else total + sparse_weighted
                 )
+
+        if self.dense_future_gesture_weight > 0:
+            dense_fg_weighted = self._compute_dense_future_gesture_regret(
+                split="train",
+                logits=logits,
+                gesture_tokens=gesture_tokens,
+                pad_loss_mask=pad_loss_mask,
+                epoch=epoch,
+                **batch_context,
+            )
+            if dense_fg_weighted is not None:
+                total = (
+                    dense_fg_weighted if total is None
+                    else total + dense_fg_weighted
+                )
         return total
 
     def record_validation_diagnostics(
@@ -780,5 +1005,15 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
                 pad_loss_mask=pad_loss_mask,
                 epoch=epoch,
                 iteration=iteration,
+                **batch_context,
+            )
+
+        if self.dense_future_gesture_weight > 0:
+            self._compute_dense_future_gesture_regret(
+                split="val",
+                logits=logits,
+                gesture_tokens=gesture_tokens,
+                pad_loss_mask=pad_loss_mask,
+                epoch=epoch,
                 **batch_context,
             )

@@ -25,6 +25,22 @@ because the privileged information now lives in the same stream as the
 prediction target. It is deliberately sparse (one selected timestep per
 sample) rather than dense, and cross-attention stays causal in that view so
 its signal isn't conflated with the speech/text mechanism above.
+
+``forward_dense_future_gesture_teacher_view`` is the dense counterpart: it
+implements the paper's Eq. 17 mask *literally* -- a per-query attention-bias
+exclusion of just the one key holding that query's own target, over
+otherwise completely unmodified tokens -- rather than
+``forward_masked_target_teacher_view``'s token-substitution-based masking.
+Because the exclusion is a property of the query-key pair rather than the
+input tokens, every position gets a valid teacher view in a single forward
+pass, matching the density of the cross-attention mechanism above at
+roughly the same per-pass cost as the sparse gesture mechanism. This
+required two small, additive changes outside this module:
+``StreamingMultiheadCrossAttention.forward`` gained an optional
+``extra_attn_bias`` parameter (ANDed into its internally-computed mask,
+``miburi/modules/transformer.py``), and ``GTemporalDepthModel3.forward_temporal``
+gained a ``self_attn_bias`` passthrough (``miburi/models/gesture_lm.py``).
+Both default to ``None`` and are no-ops for every other existing caller.
 """
 
 from __future__ import annotations
@@ -50,6 +66,63 @@ def _prepend_initial_and_shift(model, codes: torch.Tensor) -> torch.Tensor:
     initial = model._get_initial_token().expand(B, K, -1)
     sequence = torch.cat([initial, codes], dim=2)
     return sequence[:, :, :-1]
+
+
+def _prepend_initial_full(model, codes: torch.Tensor) -> torch.Tensor:
+    """Like ``_prepend_initial_and_shift`` but keeps the final position.
+
+    ``GTemporalDepthModel3.forward`` calls this its ``temporal_include_last_
+    input=True`` path: the untruncated, length-``T+1`` sequence is required
+    so every real target -- including the very last one, ``codes[:, :, -1]``
+    -- has a corresponding key position for a target-exclusion bias to
+    actually name. The plain shift (which truncates) silently drops that
+    key, leaving the last position with nothing to exclude.
+    """
+
+    B, K, _ = codes.shape
+    initial = model._get_initial_token().expand(B, K, -1)
+    return torch.cat([initial, codes], dim=2)
+
+
+def _shifted_key_padding_mask(
+    valid_position_mask: torch.Tensor, seq_len: int,
+) -> torch.Tensor:
+    """``[B, seq_len]`` boolean key-padding mask (True == padding) for a
+    ``_prepend_initial_*``-shifted sequence of the given length.
+
+    Position 0 (the initial token) is always valid. Position ``m >= 1``
+    maps to ``valid_position_mask[:, m-1]`` -- shifted by one, matching how
+    ``_prepend_initial_and_shift``/``_prepend_initial_full`` build the
+    sequence from ``codes``. Works for both the truncated (``seq_len=T``)
+    and untruncated (``seq_len=T+1``) sequences.
+    """
+
+    B = valid_position_mask.shape[0]
+    device = valid_position_mask.device
+    shifted_valid = torch.ones(B, seq_len, dtype=torch.bool, device=device)
+    body_len = seq_len - 1
+    shifted_valid[:, 1:] = valid_position_mask[:, :body_len]
+    return ~shifted_valid
+
+
+def _build_target_exclusion_bias(seq_len: int, device) -> torch.Tensor:
+    """``[1, 1, seq_len, seq_len]`` boolean mask, True == allowed to attend,
+    False only where ``key == query + 1`` -- the shifted-sequence position
+    holding the query's own prediction target.
+
+    Mirrors the paper's GlobalRegret mask (Eq. 17: ``M[i, i+1] = -inf``,
+    everywhere else 0) exactly, including the property it does *not*
+    provide: this is a pure attention-level exclusion over otherwise
+    intact, unmodified tokens, so it inherits the same leak-permissive
+    caveat as ``forward_masked_target_teacher_view`` (see its docstring) --
+    it does not protect against MIBURI's causal gesture codec smearing
+    information about a hidden position into a visible one.
+    """
+
+    positions = torch.arange(seq_len, device=device)
+    exclude = positions.view(-1, 1) + 1 == positions.view(1, -1)
+    allow = ~exclude
+    return allow.view(1, 1, seq_len, seq_len)
 
 
 def _process_conditions_squeezed(model, audio_codes, text_codes):
@@ -233,6 +306,7 @@ def forward_masked_target_teacher_view(
     horizon_tokens: int,
     past_context_tokens: int,
     mask_token_id: int,
+    valid_position_mask: torch.Tensor,
     ca_depth_padding_mask: torch.Tensor | None = None,
     include_depth_levels: bool = True,
     depth_input_codes: torch.Tensor | None = None,
@@ -258,6 +332,12 @@ def forward_masked_target_teacher_view(
     check for whether future gesture information helps at all, before
     paying for a leak-safe (reset-encoded) version.
 
+    ``valid_position_mask`` (``[B, T]``, True == genuine, non-padding
+    position) is required: causal attention can never structurally reach
+    forward into within-buffer padding, but this call makes self-attention
+    bidirectional, so without an explicit padding mask a valid query could
+    attend into padding for any clip shorter than the full buffer.
+
     Runs entirely under ``no_grad``, and is sparse over ``T`` (self-attention
     is still computed at every position internally, but only the selected
     ``target_times`` positions are meaningful and expected to be read out).
@@ -272,12 +352,12 @@ def forward_masked_target_teacher_view(
         mask_token_id=mask_token_id,
     )
     temporal_sequence = _prepend_initial_and_shift(model, masked_codes)
-    temporal_sum_condition = sum_condition.unsqueeze(1).expand(
-        -1, temporal_sequence.shape[-1],
-    )
+    seq_len = temporal_sequence.shape[-1]
+    temporal_sum_condition = sum_condition.unsqueeze(1).expand(-1, seq_len)
     audio_condition, text_condition = _process_conditions_squeezed(
         model, audio_codes, text_codes,
     )
+    key_padding_mask = _shifted_key_padding_mask(valid_position_mask, seq_len)
 
     with relaxed_temporal_self_attention(model.temporal_transformer):
         teacher_transformer_out, teacher_temp_logits = model.forward_temporal(
@@ -285,7 +365,85 @@ def forward_masked_target_teacher_view(
             audio_condition=audio_condition,
             text_condition=text_condition,
             sum_condition=temporal_sum_condition,
+            key_padding_mask=key_padding_mask,
         )
+
+    if not include_depth_levels:
+        return teacher_temp_logits, None
+
+    teacher_depth_logits = _forward_depth_branch(
+        model,
+        teacher_transformer_out=teacher_transformer_out,
+        input_codes=input_codes,
+        depth_input_codes=depth_input_codes,
+        audio_condition=audio_condition,
+        text_condition=text_condition,
+        sum_condition=sum_condition,
+        ca_depth_padding_mask=ca_depth_padding_mask,
+    )
+    return teacher_temp_logits, teacher_depth_logits
+
+
+@torch.no_grad()
+def forward_dense_future_gesture_teacher_view(
+    model,
+    *,
+    input_codes: torch.Tensor,
+    audio_codes: torch.Tensor,
+    text_codes: torch.Tensor,
+    sum_condition: torch.Tensor,
+    valid_position_mask: torch.Tensor,
+    ca_depth_padding_mask: torch.Tensor | None = None,
+    include_depth_levels: bool = True,
+    depth_input_codes: torch.Tensor | None = None,
+) -> tp.Tuple[torch.Tensor, torch.Tensor | None]:
+    """Dense, single-pass, bidirectional-self-attention teacher view.
+
+    The paper's own GlobalRegret mechanism (Eq. 17), applied to MIBURI's
+    gesture stream: every position gets a simultaneous, valid teacher view
+    in one forward pass, via a per-query attention-bias exclusion (block
+    only the one key holding that query's own target, via
+    ``_build_target_exclusion_bias``) rather than
+    ``forward_masked_target_teacher_view``'s single selected, token-
+    substituted target. No token is ever replaced or corrupted here -- the
+    true codes are always the input; only the attention pattern changes,
+    which is what makes every position simultaneously valid in one pass.
+
+    Requires the untruncated sequence (``_prepend_initial_full``, MIBURI's
+    ``temporal_include_last_input=True`` path) so the very last position
+    also has a key to exclude -- the plain truncated shift silently drops
+    it. Requires ``valid_position_mask`` for the same reason
+    ``forward_masked_target_teacher_view`` does: bidirectional attention can
+    reach into within-buffer padding that causal attention never could.
+
+    Same leak-permissive caveat as ``forward_masked_target_teacher_view``:
+    this does not protect against MIBURI's causal gesture codec smearing
+    information about a hidden position into a visible later one. Runs
+    entirely under ``no_grad``.
+    """
+
+    _, _, T = input_codes.shape
+    full_sequence = _prepend_initial_full(model, input_codes)
+    seq_len = full_sequence.shape[-1]
+    temporal_sum_condition = sum_condition.unsqueeze(1).expand(-1, seq_len)
+    audio_condition, text_condition = _process_conditions_squeezed(
+        model, audio_codes, text_codes,
+    )
+    self_attn_bias = _build_target_exclusion_bias(seq_len, full_sequence.device)
+    key_padding_mask = _shifted_key_padding_mask(valid_position_mask, seq_len)
+
+    with relaxed_temporal_self_attention(model.temporal_transformer):
+        teacher_transformer_out, teacher_temp_logits = model.forward_temporal(
+            full_sequence,
+            audio_condition=audio_condition,
+            text_condition=text_condition,
+            sum_condition=temporal_sum_condition,
+            key_padding_mask=key_padding_mask,
+            self_attn_bias=self_attn_bias,
+        )
+
+    teacher_transformer_out = teacher_transformer_out[:, :T]
+    teacher_temp_logits = teacher_temp_logits[:, :, :T]
 
     if not include_depth_levels:
         return teacher_temp_logits, None

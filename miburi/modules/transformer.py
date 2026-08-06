@@ -665,13 +665,22 @@ class StreamingMultiheadCrossAttention(StreamingModule[_MHCAState]):
             return state.kv_cache.complete(k, v, state.exec_mask)
 
     def forward(
-            self, 
-            query: torch.Tensor, 
-            key: torch.Tensor, 
-            value: torch.Tensor, 
-            query_padding_mask: tp.Optional[torch.Tensor] = None, 
-            key_padding_mask: tp.Optional[torch.Tensor] = None
+            self,
+            query: torch.Tensor,
+            key: torch.Tensor,
+            value: torch.Tensor,
+            query_padding_mask: tp.Optional[torch.Tensor] = None,
+            key_padding_mask: tp.Optional[torch.Tensor] = None,
+            extra_attn_bias: tp.Optional[torch.Tensor] = None,
         ):
+        """``extra_attn_bias``: optional boolean mask (broadcastable to
+        ``[B, 1, T_q, T_k]``, True == allowed to attend), ANDed into whatever
+        mask causal/context/padding settings already produce. Lets a caller
+        express attention patterns the ``causal``/``context`` attributes
+        alone cannot (e.g. per-query-position exclusions) without altering
+        those attributes or touching any other call site -- ``None`` (the
+        default) reproduces this method's exact prior behavior.
+        """
         state = self._streaming_state
         T_q = query.shape[1]
         T_k = key.shape[1]
@@ -803,6 +812,12 @@ class StreamingMultiheadCrossAttention(StreamingModule[_MHCAState]):
                 attn_bias = ~key_padding_mask[:, None, None, :].expand(-1, -1, T_q, -1)
             else:
                 attn_bias = attn_bias & (~key_padding_mask[:, None, None, :])
+
+        if extra_attn_bias is not None:
+            attn_bias = (
+                extra_attn_bias if attn_bias is None
+                else attn_bias & extra_attn_bias
+            )
 
         # if T_q == 19:
             # import math
@@ -1195,17 +1210,23 @@ class StreamingTransformerDecoderLayer(StreamingTransformerLayer):
         ])
         self.memory_projs = nn.Sequential(*self.memory_projs)
 
-    def _sa_block(self, x: torch.Tensor, key_padding_mask: tp.Optional[torch.Tensor] = None):
+    def _sa_block(
+            self,
+            x: torch.Tensor,
+            key_padding_mask: tp.Optional[torch.Tensor] = None,
+            self_attn_bias: tp.Optional[torch.Tensor] = None,
+        ):
         if self.skip_self_attn:
             return x
         x_orig = x
         x = self.norm1(x)
         update = self.self_attn(
-            x, 
-            x, 
-            x, 
+            x,
+            x,
+            x,
             # query_padding_mask=query_padding_mask,
-            key_padding_mask=key_padding_mask
+            key_padding_mask=key_padding_mask,
+            extra_attn_bias=self_attn_bias,
             )
         if self.dropout > 0: 
             update = self.self_attn_dp(update)
@@ -1263,19 +1284,22 @@ class StreamingTransformerDecoderLayer(StreamingTransformerLayer):
         #     print(self.layer_scale_3(ca_sum).mean(dim=0).mean(dim=-1))
         return x_orig.to(ca_sum) + self.layer_scale_3(ca_sum)
     
-    def forward(self, 
-                x: torch.Tensor, 
+    def forward(self,
+                x: torch.Tensor,
                 memories: tp.List[torch.Tensor] = None,
                 key_padding_mask: tp.Optional[torch.Tensor] = None,
                 ca_query_padding_mask: tp.Optional[torch.Tensor] = None,
                 ca_key_padding_mask: tp.Optional[torch.Tensor] = None,
                 query_padding_mask: tp.Optional[torch.Tensor] = None,
+                self_attn_bias: tp.Optional[torch.Tensor] = None,
                 ):
         with ExitStack() as stack:
             if x.device.type != 'cuda':
                 stack.enter_context(no_compile())
             # print("selfattn")
-            x = self._sa_block(x, key_padding_mask=key_padding_mask)
+            x = self._sa_block(
+                x, key_padding_mask=key_padding_mask, self_attn_bias=self_attn_bias,
+            )
             # print("crossattn")
             x = self._ca_block(x, memories, key_padding_mask=ca_key_padding_mask, query_padding_mask=ca_query_padding_mask)
             x = self._ff_block(x)

@@ -488,17 +488,23 @@ class GTemporalDepthModel3(StreamingContainer):
         return combined_logits
 
     def forward_temporal(
-            self, 
+            self,
             sequence: torch.Tensor,
             audio_condition: torch.Tensor,
             text_condition: torch.Tensor,
             sum_condition: torch.Tensor | None = None,
             key_padding_mask: torch.Tensor | None = None,
+            self_attn_bias: torch.Tensor | None = None,
         ):
         """
         Args:
             codes (torch.Tensor): Input codes of shape [B, K, T].
             condition_tensors (ConditionTensors): Condition tensors for the model.
+            self_attn_bias: optional boolean mask (broadcastable to
+                [B, 1, T, T], True == allowed to attend) passed straight
+                through to the temporal transformer's gesture self-attention,
+                ANDed with whatever its causal/context/padding settings
+                already produce. None (the default) changes nothing.
         """
         
         B, K, T = sequence.shape
@@ -527,6 +533,7 @@ class GTemporalDepthModel3(StreamingContainer):
             input_,
             memories=condition_tensors,
             key_padding_mask=key_padding_mask,
+            self_attn_bias=self_attn_bias,
         )
         if self.out_norm:
             transformer_out = self.out_norm(transformer_out)

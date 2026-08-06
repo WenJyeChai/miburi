@@ -481,6 +481,61 @@ this signal's effect can be read independently of the dense term's.
 mask toggle/restore (including that cross-attention is left untouched) and
 that this teacher view is gradient-free.
 
+##### + dense future-gesture regret (the paper's actual Eq. 17 mechanism)
+
+`--dense_future_gesture_weight` is a third, independent term implementing
+GlobalRegret's masking *literally*, the way the paper's own reference
+implementation does it: a per-query attention-bias exclusion of only the
+one key holding that query's own prediction target, over otherwise
+completely unmodified tokens -- not the token-substitution masking
+`--sparse_future_gesture_weight` uses. Because the exclusion is a property
+of the query-key pair rather than the input, every position gets a valid
+teacher view in a single forward pass, at roughly the same per-pass cost as
+the sparse term (self-attention already processes the whole sequence
+regardless of how many positions are usable afterward). Cross-attention
+stays causal here too, same isolation rationale as the sparse term; the two
+can be enabled together or independently.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 \
+python scripts/train.py \
+    --config configs/gtdm3_sharedregret_global_audiotext_ufl_25_beatx_small.yaml \
+    --dense_future_gesture_weight 1.0 \
+    --wandb True --wandb_mode online \
+    --wandb_project miburi --wandb_group student-sharedregret-global-densefg
+```
+
+Getting this to work required two small, additive changes outside
+`miburi/models/gesture_lm_shared_regret.py`, both defaulting to `None` and
+inert for every other existing caller:
+`StreamingMultiheadCrossAttention.forward` (`miburi/modules/transformer.py`)
+gained an `extra_attn_bias` parameter, ANDed into whatever mask its
+`causal`/`context`/padding settings already produce; and
+`GTemporalDepthModel3.forward_temporal` (`miburi/models/gesture_lm.py`)
+gained a `self_attn_bias` passthrough to the temporal transformer. This is
+the only place in the whole shared-regret feature that touches either file.
+
+Two correctness properties specific to this mechanism, both covered by
+`scripts/smoke_test_gesture_lm_shared_regret.py`:
+
+- It needs the *untruncated* temporal sequence (MIBURI's
+  `temporal_include_last_input=True` path) so the very last position also
+  has a key to exclude -- the ordinary shift truncates it away, which
+  would otherwise silently give the last position no exclusion at all.
+- Making self-attention bidirectional means a valid query can now reach
+  *forward* into within-buffer padding, something causal attention could
+  never structurally do. Both this mechanism and the sparse one above
+  therefore require an explicit padding-derived `key_padding_mask`
+  (built from `pad_loss_mask[:, 0, :]`) -- retrofitted onto the sparse
+  mechanism too, since the gap predates this addition and was live in
+  already-training runs.
+
+Same leak-permissive caveat as the sparse term applies here unchanged:
+neither mechanism protects against MIBURI's causal gesture codec smearing
+information about a hidden position into a visible later one -- that's
+what the leak-safe reset-encoded views (`build_reset_future_teacher_inputs`)
+exist for, at a much higher per-step cost this mechanism deliberately avoids.
+
 #### Experimental three-q0 global-C2F Gesture LM
 
 The opt-in C2F variant is separate from the released GTDM3 model and config.

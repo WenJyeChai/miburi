@@ -193,6 +193,27 @@ def parse_args():
             "reset-encoded view the reset-future trainers use."
         ),
     )
+    # Dense future-gesture regret: the paper's own Eq. 17 GlobalRegret mask
+    # (per-query attention-bias exclusion of just that query's own target),
+    # applied to gesture self-attention instead of token substitution.
+    # Complementary to sparse_future_gesture_weight above -- both can be
+    # enabled together, or either alone. Off by default; rides the same
+    # ramp as regret_alpha, rescaled to its own weight, like the sparse term.
+    parser.add(
+        "--dense_future_gesture_weight",
+        default=0.0,
+        type=float,
+        help=(
+            "Final alpha for the dense future-gesture regret term. Zero "
+            "(default) disables it entirely. Nonzero covers every valid "
+            "position in one forward pass (unlike "
+            "sparse_future_gesture_weight's one-target-per-sample), via a "
+            "per-query attention-bias exclusion of only that position's own "
+            "target -- no token substitution, same leak-permissive caveat "
+            "as the sparse term. Rides the same ramp shape as regret_alpha, "
+            "rescaled to this weight instead of regret_weight."
+        ),
+    )
     parser.add(
         "--frozen_temporal_ckpt",
         default=None,
