@@ -1,3 +1,5 @@
+import math
+
 import torch
 
 
@@ -47,6 +49,30 @@ def create_scheduler(args, optimizer, **kwargs):
             optimizer,
             step_size=args.decay_epochs,
             gamma=args.decay_rate,
+        )
+    elif args.lr_policy == "cosine_delay":
+        start_epoch = int(args.lr_cosine_start_epoch)
+        end_epoch = int(args.lr_cosine_end_epoch)
+        if end_epoch < 0:
+            end_epoch = num_epochs
+        if end_epoch <= start_epoch:
+            raise ValueError(
+                "lr_cosine_end_epoch must be greater than "
+                f"lr_cosine_start_epoch (got start={start_epoch}, "
+                f"end={end_epoch})."
+            )
+        eta_min_ratio = args.lr_min / args.lr_base
+
+        def _cosine_delay_factor(epoch: int) -> float:
+            if epoch <= start_epoch:
+                return 1.0
+            progress = min(1.0, (epoch - start_epoch) / (end_epoch - start_epoch))
+            return eta_min_ratio + 0.5 * (1.0 - eta_min_ratio) * (
+                1.0 + math.cos(math.pi * progress)
+            )
+
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lr_lambda=_cosine_delay_factor,
         )
     else:
         raise ValueError(f"Unknown LR policy: {args.lr}")

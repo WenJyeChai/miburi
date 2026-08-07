@@ -343,6 +343,10 @@ def parse_args():
     parser.add("--decay_epochs", default=9999, type=int)
     parser.add("--decay_rate", default=0.1, type=float)
     parser.add("--lr_policy", default="step", type=str)
+    # for lr_policy=cosine_delay: flat at lr_base until lr_cosine_start_epoch,
+    # then cosine anneals down to lr_min by lr_cosine_end_epoch (-1 == args.epochs).
+    parser.add("--lr_cosine_start_epoch", default=0, type=int)
+    parser.add("--lr_cosine_end_epoch", default=-1, type=int)
     # for sgd
     parser.add("--momentum", default=0.8, type=float)
     parser.add("--rec_weight", default=500, type=float)
