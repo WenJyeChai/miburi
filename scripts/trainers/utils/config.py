@@ -162,56 +162,42 @@ def parse_args():
             "state instead of the student's. Default on."
         ),
     )
-    # Sparse, masked-target future-gesture regret (UpperFaceLowerGTDM3SharedRegret*).
-    # Complementary to the dense speech/text GlobalRegret above: relaxes
-    # gesture self-attention instead of cross-attention, for one selected
-    # timestep per sample, isolating future *gesture* information. Off by
-    # default (weight 0); rides regret_alpha's ramp, rescaled to its own
-    # weight, rather than a separate schedule.
-    parser.add(
-        "--sparse_future_gesture_weight",
-        default=0.0,
-        type=float,
-        help=(
-            "Final alpha for the sparse future-gesture regret term. Zero "
-            "(default) disables it entirely -- no extra forward pass, no "
-            "cost. Nonzero rides the same ramp shape as regret_alpha "
-            "(regret_start_epoch/regret_ramp_epochs/regret_initial_weight), "
-            "rescaled to this weight instead of regret_weight."
-        ),
-    )
-    parser.add(
-        "--sparse_future_gesture_horizon_tokens",
-        default=1,
-        type=int,
-        help=(
-            "Guard width (in gesture tokens) hidden at the selected target "
-            "position before the intact ground-truth future becomes "
-            "visible to the masked-target teacher view. One (default) "
-            "masks only the literal target token -- a cheap, "
-            "leak-permissive upper-bound check, not the leak-safe "
-            "reset-encoded view the reset-future trainers use."
-        ),
-    )
-    # Dense future-gesture regret: the paper's own Eq. 17 GlobalRegret mask
-    # (per-query attention-bias exclusion of just that query's own target),
-    # applied to gesture self-attention instead of token substitution.
-    # Complementary to sparse_future_gesture_weight above -- both can be
-    # enabled together, or either alone. Off by default; rides the same
-    # ramp as regret_alpha, rescaled to its own weight, like the sparse term.
+    # Dense future-gesture regret (UpperFaceLowerGTDM3SharedRegret*): the
+    # paper's own Eq. 17 GlobalRegret mask (per-query attention-bias
+    # exclusion of just that query's own target), applied to gesture
+    # self-attention instead of the dense speech/text term's cross-attention.
+    # Off by default (weight 0); rides regret_alpha's ramp, rescaled to its
+    # own weight, rather than a separate schedule.
     parser.add(
         "--dense_future_gesture_weight",
         default=0.0,
         type=float,
         help=(
             "Final alpha for the dense future-gesture regret term. Zero "
-            "(default) disables it entirely. Nonzero covers every valid "
-            "position in one forward pass (unlike "
-            "sparse_future_gesture_weight's one-target-per-sample), via a "
-            "per-query attention-bias exclusion of only that position's own "
-            "target -- no token substitution, same leak-permissive caveat "
-            "as the sparse term. Rides the same ramp shape as regret_alpha, "
+            "(default) disables it entirely -- no extra forward pass, no "
+            "cost. Nonzero covers every valid position in one forward pass "
+            "via a per-query attention-bias exclusion of only that "
+            "position's own target (no token substitution); does not "
+            "protect against the causal gesture codec smearing information "
+            "about a hidden position into a visible later one. Rides the "
+            "same ramp shape as regret_alpha "
+            "(regret_start_epoch/regret_ramp_epochs/regret_initial_weight), "
             "rescaled to this weight instead of regret_weight."
+        ),
+    )
+    parser.add(
+        "--dense_future_gesture_horizon_tokens",
+        default=1,
+        type=int,
+        help=(
+            "Guard width (in gesture tokens) each query position excludes, "
+            "starting at its own prediction target, in the dense "
+            "future-gesture attention-bias mask. One (default) excludes "
+            "only the literal target -- the paper's own Eq. 17 mask. "
+            "Larger values widen the guard for every position at once "
+            "(the same knob the old sparse mechanism's horizon_tokens "
+            "offered, applied densely here instead of to one sampled "
+            "target). No effect when dense_future_gesture_weight is 0."
         ),
     )
     parser.add(

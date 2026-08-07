@@ -8,7 +8,6 @@ from miburi.models.gesture_lm_shared_regret import (
     _shifted_key_padding_mask,
     dense_regret_kl,
     forward_dense_future_gesture_teacher_view,
-    forward_masked_target_teacher_view,
     forward_teacher_view,
     relaxed_temporal_cross_attention,
     relaxed_temporal_self_attention,
@@ -268,85 +267,12 @@ def test_self_attention_context_manager_toggles_and_restores():
     try:
         with relaxed_temporal_self_attention(model.temporal_transformer):
             assert all(not sa.causal for sa in self_attns)
-            raise RuntimeError("simulated failure mid-masked-target-pass")
+            raise RuntimeError("simulated failure mid-future-gesture-pass")
     except RuntimeError:
         pass
     assert all(sa.causal for sa in self_attns), (
         "self-attention causal flags must be restored even when the "
-        "masked-target teacher pass raises"
-    )
-
-
-def test_masked_target_teacher_view_is_gradient_free_and_isolated():
-    """No grad, and neither attention flag leaks past the call."""
-
-    model = _make_model().train()
-    codes, audio, text, speaker = _batch()
-    target_times = torch.tensor([1, 2])
-
-    teacher_temp_logits, teacher_depth_logits = (
-        forward_masked_target_teacher_view(
-            model,
-            input_codes=codes,
-            target_codes=codes,
-            target_times=target_times,
-            audio_codes=audio,
-            text_codes=text,
-            sum_condition=speaker,
-            horizon_tokens=1,
-            past_context_tokens=4,
-            mask_token_id=model.pad_token_id,
-            valid_position_mask=torch.ones(2, 4, dtype=torch.bool),
-            include_depth_levels=True,
-        )
-    )
-    assert not teacher_temp_logits.requires_grad
-    assert not teacher_depth_logits.requires_grad
-    assert teacher_temp_logits.grad_fn is None
-    assert teacher_depth_logits.grad_fn is None
-
-    assert all(
-        layer.self_attn.causal
-        for layer in model.temporal_transformer.layers
-    )
-    assert all(
-        ca.causal
-        for layer in model.temporal_transformer.layers
-        for ca in layer.cross_attns
-    )
-
-
-def test_masked_target_teacher_view_differs_from_causal_student():
-    model = _make_model().train()
-    codes, audio, text, speaker = _batch()
-    target_times = torch.tensor([1, 2])
-
-    teacher_temp_logits, _ = forward_masked_target_teacher_view(
-        model,
-        input_codes=codes,
-        target_codes=codes,
-        target_times=target_times,
-        audio_codes=audio,
-        text_codes=text,
-        sum_condition=speaker,
-        horizon_tokens=1,
-        past_context_tokens=4,
-        mask_token_id=model.pad_token_id,
-        valid_position_mask=torch.ones(2, 4, dtype=torch.bool),
-        include_depth_levels=False,
-    )
-    student_logits = model(
-        codes,
-        audio_codes=audio,
-        text_codes=text,
-        sum_condition=speaker,
-    )
-    student_temp_logits = student_logits[:, :1]
-    assert not torch.allclose(
-        teacher_temp_logits, student_temp_logits, atol=1e-6,
-    ), (
-        "bidirectional self-attention over a masked-target sequence should "
-        "not coincide with the plain causal student's q0 logits"
+        "future-gesture teacher pass raises"
     )
 
 
@@ -362,14 +288,43 @@ def test_build_target_exclusion_bias_shape_and_pattern():
             assert grid[i, j].item() == expected, (i, j)
 
 
+def test_build_target_exclusion_bias_widened_window():
+    """horizon_tokens > 1 excludes a band, not just the single diagonal.
+
+    Past/self (j <= i) must never be excluded regardless of window width --
+    that's the query's genuine causal history, not privileged information.
+    """
+
+    seq_len = 6
+    horizon_tokens = 3
+    bias = _build_target_exclusion_bias(
+        seq_len, torch.device("cpu"), horizon_tokens=horizon_tokens,
+    )
+    grid = bias[0, 0]
+    for i in range(seq_len):
+        for j in range(seq_len):
+            delta = j - i
+            expected = not (1 <= delta <= horizon_tokens)
+            assert grid[i, j].item() == expected, (i, j, delta)
+        # Every row keeps at least itself/its history visible.
+        assert grid[i, : i + 1].all()
+
+    try:
+        _build_target_exclusion_bias(seq_len, torch.device("cpu"), horizon_tokens=0)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for horizon_tokens < 1")
+
+
 def test_shifted_key_padding_mask_shift_and_initial_token():
     valid_position_mask = torch.tensor([
         [True, True, False, False],
         [True, True, True, False],
     ])
 
-    # Truncated (sparse) length T=4: shifted position 0 is the initial
-    # token (always valid); positions 1..3 map to valid[:, 0:3].
+    # Truncated length T=4: shifted position 0 is the initial token
+    # (always valid); positions 1..3 map to valid[:, 0:3].
     truncated = _shifted_key_padding_mask(valid_position_mask, 4)
     assert truncated.shape == (2, 4)
     assert not truncated[:, 0].any()
@@ -407,8 +362,7 @@ def test_dense_future_gesture_teacher_view_is_gradient_free_and_covers_full_T():
             include_depth_levels=True,
         )
     )
-    # Dense: every position gets a valid teacher view in this one pass,
-    # unlike the sparse mechanism's single selected target.
+    # Every position gets a valid teacher view in this one pass.
     assert teacher_temp_logits.shape[2] == T
     assert teacher_depth_logits.shape[2] == T
     assert not teacher_temp_logits.requires_grad
@@ -451,15 +405,40 @@ def test_dense_future_gesture_teacher_view_differs_from_causal_student():
     )
 
 
-def _padding_probe_batch():
-    """A batch with genuine per-sample padding beyond a short valid length."""
+def test_dense_future_gesture_teacher_view_horizon_tokens_widens_the_guard():
+    """A wider horizon_tokens hides more future, changing the teacher view.
 
+    Doesn't assert a specific direction (more/less confident) -- just that
+    the extra window actually reaches the model, i.e. horizon_tokens isn't
+    silently ignored end-to-end.
+    """
+
+    model = _make_model().train()
     codes, audio, text, speaker = _batch()
-    valid_position_mask = torch.tensor([
-        [True, True, False, False],
-        [True, True, True, False],
-    ])
-    return codes, audio, text, speaker, valid_position_mask
+    B, K, T = codes.shape
+    valid_position_mask = torch.ones(B, T, dtype=torch.bool)
+
+    narrow_logits, _ = forward_dense_future_gesture_teacher_view(
+        model,
+        input_codes=codes,
+        audio_codes=audio,
+        text_codes=text,
+        sum_condition=speaker,
+        valid_position_mask=valid_position_mask,
+        horizon_tokens=1,
+        include_depth_levels=False,
+    )
+    wide_logits, _ = forward_dense_future_gesture_teacher_view(
+        model,
+        input_codes=codes,
+        audio_codes=audio,
+        text_codes=text,
+        sum_condition=speaker,
+        valid_position_mask=valid_position_mask,
+        horizon_tokens=3,
+        include_depth_levels=False,
+    )
+    assert not torch.allclose(narrow_logits, wide_logits, atol=1e-6)
 
 
 def test_dense_future_gesture_teacher_view_ignores_padding_content():
@@ -471,9 +450,13 @@ def test_dense_future_gesture_teacher_view_ignores_padding_content():
     """
 
     model = _make_model().eval()
-    codes, audio, text, speaker, valid_position_mask = _padding_probe_batch()
+    codes, audio, text, speaker = _batch()
     B, K, T = codes.shape
     card = model.card
+    valid_position_mask = torch.tensor([
+        [True, True, False, False],
+        [True, True, True, False],
+    ])
 
     codes_a = codes.clone()
     codes_b = codes.clone()
@@ -509,59 +492,6 @@ def test_dense_future_gesture_teacher_view_ignores_padding_content():
         )
 
 
-def test_masked_target_teacher_view_ignores_padding_content():
-    """Same padding-invariance property, for the sparse mechanism."""
-
-    model = _make_model().eval()
-    codes, audio, text, speaker, valid_position_mask = _padding_probe_batch()
-    B, K, T = codes.shape
-    card = model.card
-    target_times = torch.tensor([0, 1])  # inside each sample's valid region
-
-    codes_a = codes.clone()
-    codes_b = codes.clone()
-    for b in range(B):
-        valid_len = int(valid_position_mask[b].sum().item())
-        if valid_len < T:
-            codes_b[b, :, valid_len:] = torch.remainder(
-                codes_a[b, :, valid_len:] + 1, card,
-            )
-
-    logits_a, _ = forward_masked_target_teacher_view(
-        model,
-        input_codes=codes_a,
-        target_codes=codes_a,
-        target_times=target_times,
-        audio_codes=audio,
-        text_codes=text,
-        sum_condition=speaker,
-        horizon_tokens=1,
-        past_context_tokens=4,
-        mask_token_id=model.pad_token_id,
-        valid_position_mask=valid_position_mask,
-        include_depth_levels=False,
-    )
-    logits_b, _ = forward_masked_target_teacher_view(
-        model,
-        input_codes=codes_b,
-        target_codes=codes_b,
-        target_times=target_times,
-        audio_codes=audio,
-        text_codes=text,
-        sum_condition=speaker,
-        horizon_tokens=1,
-        past_context_tokens=4,
-        mask_token_id=model.pad_token_id,
-        valid_position_mask=valid_position_mask,
-        include_depth_levels=False,
-    )
-    for b in range(B):
-        valid_len = int(valid_position_mask[b].sum().item())
-        torch.testing.assert_close(
-            logits_a[b, :, :valid_len], logits_b[b, :, :valid_len],
-        )
-
-
 if __name__ == "__main__":
     test_context_manager_toggles_and_restores_causal()
     test_teacher_view_is_gradient_free_and_differs_from_student()
@@ -570,21 +500,20 @@ if __name__ == "__main__":
     test_teacher_view_depth_input_codes_override_is_isolated_to_depth()
     test_teacher_view_rejects_mismatched_depth_input_codes_shape()
     test_self_attention_context_manager_toggles_and_restores()
-    test_masked_target_teacher_view_is_gradient_free_and_isolated()
-    test_masked_target_teacher_view_differs_from_causal_student()
     test_build_target_exclusion_bias_shape_and_pattern()
+    test_build_target_exclusion_bias_widened_window()
     test_shifted_key_padding_mask_shift_and_initial_token()
     test_dense_future_gesture_teacher_view_is_gradient_free_and_covers_full_T()
     test_dense_future_gesture_teacher_view_differs_from_causal_student()
+    test_dense_future_gesture_teacher_view_horizon_tokens_widens_the_guard()
     test_dense_future_gesture_teacher_view_ignores_padding_content()
-    test_masked_target_teacher_view_ignores_padding_content()
     print(
         "Shared-regret smoke tests passed (mask toggle/restore, "
         "gradient-free teacher view, dense KL direction/stop-gradient, "
         "temporal+depth student gradients, depth_input_codes override "
         "isolation, shape validation, self-attention relaxation, "
-        "masked-target teacher view, target-exclusion bias pattern, "
-        "shifted key-padding mask, dense full-T coverage, and "
-        "padding-content invariance for both the sparse and dense "
-        "future-gesture teacher views)."
+        "target-exclusion bias pattern (default and widened window), "
+        "shifted key-padding mask, dense full-T coverage, horizon_tokens "
+        "reaching the model end-to-end, and padding-content invariance "
+        "for the dense future-gesture teacher view)."
     )

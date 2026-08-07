@@ -4,26 +4,31 @@ Distinct from ``uflgtdm3_regret_trainer.py``, which distills a separately
 pretrained, frozen full-future checkpoint (classic offline KD). This trainer
 instead follows "Regret Pre-training" literally: the causal student and its
 future-aware teacher view are the *same* weights, differing only in the
-temporal transformer's cross-attention mask for one extra, gradient-free
-forward pass per step. No teacher checkpoint, no reset-future cache, no
-second pretraining run -- see ``miburi/models/gesture_lm_shared_regret.py``
-for the mask mechanism and the KL loss.
+temporal transformer's attention mask for one extra, gradient-free forward
+pass per step. No teacher checkpoint, no reset-future cache, no second
+pretraining run -- see ``miburi/models/gesture_lm_shared_regret.py`` for the
+mask mechanisms and the KL loss.
 
-Only the GlobalRegret configuration (full-clip bidirectional audio/text
-cross-attention) is implemented for the dense term. LocalRegret (a genuine
-one-step lookahead, rather than unbounded bidirectional context) would need
-a real attention-bias primitive beyond a boolean ``causal`` toggle and is
-left as follow-up work rather than approximated.
+Two independent, optional terms, each off by default and summed together
+when both are enabled:
 
-A second, optional, sparse term (off by default, ``sparse_future_gesture_weight
-== 0``) additionally distills from a masked-target, bidirectional-*self*-
-attention teacher view: one selected timestep per sample has its input
-tokens hidden and gesture self-attention relaxed instead of cross-attention,
-isolating future *gesture* information from the future speech/text signal
-the dense term supplies. See ``forward_masked_target_teacher_view`` in
-``miburi/models/gesture_lm_shared_regret.py`` for what it does and does not
-guard against (it is a cheap, leak-permissive upper-bound check, not the
-leak-safe reset-encoded view the old reset-future trainers use).
+* The dense speech/text term (``regret_weight``): relaxes the temporal
+  transformer's audio/text cross-attention to full-clip bidirectional
+  (GlobalRegret). Only this configuration is implemented; LocalRegret (a
+  genuine one-step lookahead, rather than unbounded bidirectional context)
+  would need a real attention-bias primitive beyond a boolean ``causal``
+  toggle and is left as follow-up work rather than approximated.
+* The dense future-*gesture* term (``dense_future_gesture_weight``): the
+  same paper mechanism (Eq. 17) applied to gesture self-attention instead
+  -- a per-query attention-bias exclusion of only that position's own
+  target, over otherwise unmodified tokens, isolating future gesture
+  information from the future speech/text signal the term above supplies.
+  Cross-attention stays causal in this view.
+
+Both make no attempt to prevent MIBURI's causal gesture codec from
+smearing information about a hidden position into a visible later one --
+see the module docstring in ``gesture_lm_shared_regret.py`` for what that
+means and why it's an accepted, deliberate scope limit here.
 """
 
 from __future__ import annotations
@@ -37,7 +42,6 @@ from loguru import logger
 from miburi.models import (
     dense_regret_kl,
     forward_dense_future_gesture_teacher_view,
-    forward_masked_target_teacher_view,
     forward_teacher_view,
 )
 
@@ -106,53 +110,6 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         "teacher_advantage": "regret_depth_teacher_advantage",
     }
 
-    _SPARSE_METRICS = (
-        ("sparse_future_gesture_loss", False),
-        ("sparse_future_gesture_weighted", False),
-        ("sparse_future_gesture_alpha", False),
-        ("sparse_fg_teacher_q0_ce", False),
-        ("sparse_fg_student_q0_ce", False),
-        ("sparse_fg_teacher_q0_acc", True),
-        ("sparse_fg_student_q0_acc", True),
-        ("sparse_fg_teacher_entropy", False),
-        ("sparse_fg_student_entropy", False),
-        ("sparse_fg_teacher_gt_prob", True),
-        ("sparse_fg_student_gt_prob", True),
-        ("sparse_fg_teacher_advantage", True),
-        ("sparse_fg_depth_teacher_ce", False),
-        ("sparse_fg_depth_student_ce", False),
-        ("sparse_fg_depth_teacher_acc", True),
-        ("sparse_fg_depth_student_acc", True),
-        ("sparse_fg_depth_teacher_entropy", False),
-        ("sparse_fg_depth_student_entropy", False),
-        ("sparse_fg_depth_teacher_gt_prob", True),
-        ("sparse_fg_depth_student_gt_prob", True),
-        ("sparse_fg_depth_teacher_advantage", True),
-    )
-
-    _SPARSE_Q0_METRIC_NAMES = {
-        "teacher_ce": "sparse_fg_teacher_q0_ce",
-        "student_ce": "sparse_fg_student_q0_ce",
-        "teacher_acc": "sparse_fg_teacher_q0_acc",
-        "student_acc": "sparse_fg_student_q0_acc",
-        "teacher_entropy": "sparse_fg_teacher_entropy",
-        "student_entropy": "sparse_fg_student_entropy",
-        "teacher_gt_prob": "sparse_fg_teacher_gt_prob",
-        "student_gt_prob": "sparse_fg_student_gt_prob",
-        "teacher_advantage": "sparse_fg_teacher_advantage",
-    }
-    _SPARSE_DEPTH_METRIC_NAMES = {
-        "teacher_ce": "sparse_fg_depth_teacher_ce",
-        "student_ce": "sparse_fg_depth_student_ce",
-        "teacher_acc": "sparse_fg_depth_teacher_acc",
-        "student_acc": "sparse_fg_depth_student_acc",
-        "teacher_entropy": "sparse_fg_depth_teacher_entropy",
-        "student_entropy": "sparse_fg_depth_student_entropy",
-        "teacher_gt_prob": "sparse_fg_depth_teacher_gt_prob",
-        "student_gt_prob": "sparse_fg_depth_student_gt_prob",
-        "teacher_advantage": "sparse_fg_depth_teacher_advantage",
-    }
-
     _DENSE_FG_METRICS = (
         ("dense_future_gesture_loss", False),
         ("dense_future_gesture_weighted", False),
@@ -210,22 +167,19 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         self._validate_regret_hyperparameters()
         self.regret_start_epoch = self._resolve_regret_start_epoch()
 
-        self.sparse_future_gesture_weight = float(
-            getattr(args, "sparse_future_gesture_weight", 0.0)
-        )
-        self.sparse_future_gesture_horizon_tokens = int(
-            getattr(args, "sparse_future_gesture_horizon_tokens", 1)
-        )
-        self.sparse_future_gesture_past_context_tokens = int(
-            self._student_model().context
-        )
-        self._validate_sparse_future_gesture_hyperparameters()
-
         self.dense_future_gesture_weight = float(
             getattr(args, "dense_future_gesture_weight", 0.0)
         )
         if self.dense_future_gesture_weight < 0:
             raise ValueError("dense_future_gesture_weight cannot be negative.")
+        self.dense_future_gesture_horizon_tokens = int(
+            getattr(args, "dense_future_gesture_horizon_tokens", 1)
+        )
+        if self.dense_future_gesture_horizon_tokens < 1:
+            raise ValueError(
+                "dense_future_gesture_horizon_tokens must be at least one "
+                "(one excludes only the literal target token)."
+            )
 
         logger.info(
             f"[GPU{self.global_rank}:{self.local_rank}] Shared-weight "
@@ -237,23 +191,15 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
             f"{self.args.regret_ramp_epochs} epochs; "
             f"temperature={self.args.regret_temperature}"
         )
-        if self.sparse_future_gesture_weight > 0:
-            logger.info(
-                f"[GPU{self.global_rank}:{self.local_rank}] Sparse "
-                "future-gesture regret enabled: weight="
-                f"{self.sparse_future_gesture_weight} (rides the same ramp "
-                "as regret_alpha, rescaled); horizon_tokens="
-                f"{self.sparse_future_gesture_horizon_tokens}; "
-                "cross-attention stays causal in this view."
-            )
         if self.dense_future_gesture_weight > 0:
             logger.info(
                 f"[GPU{self.global_rank}:{self.local_rank}] Dense "
                 "future-gesture regret enabled: weight="
                 f"{self.dense_future_gesture_weight} (rides the same ramp "
-                "as regret_alpha, rescaled); per-query target-exclusion "
-                "attention bias, every position covered in one pass; "
-                "cross-attention stays causal in this view."
+                "as regret_alpha, rescaled); horizon_tokens="
+                f"{self.dense_future_gesture_horizon_tokens}; per-query "
+                "target-exclusion attention bias, every position covered "
+                "in one pass; cross-attention stays causal in this view."
             )
 
     def _student_model(self):
@@ -266,9 +212,7 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
             old_tracker.is_higher_better[name]
             for name in old_tracker.metric_names
         ]
-        all_metrics = (
-            self._REGRET_METRICS + self._SPARSE_METRICS + self._DENSE_FG_METRICS
-        )
+        all_metrics = self._REGRET_METRICS + self._DENSE_FG_METRICS
         for name, direction in all_metrics:
             if name not in names:
                 names.append(name)
@@ -291,22 +235,6 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
             )
         if self.args.regret_ramp_epochs < 0:
             raise ValueError("regret_ramp_epochs cannot be negative.")
-
-    def _validate_sparse_future_gesture_hyperparameters(self):
-        if self.sparse_future_gesture_weight < 0:
-            raise ValueError(
-                "sparse_future_gesture_weight cannot be negative."
-            )
-        if self.sparse_future_gesture_horizon_tokens < 1:
-            raise ValueError(
-                "sparse_future_gesture_horizon_tokens must be at least one "
-                "(one masks only the literal target token)."
-            )
-        if self.sparse_future_gesture_past_context_tokens <= 0:
-            raise ValueError(
-                "Sparse future-gesture regret requires a positive causal "
-                "gesture context."
-            )
 
     def _resolve_regret_start_epoch(self) -> int:
         configured = int(self.args.regret_start_epoch)
@@ -347,28 +275,16 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         )
         return initial + (maximum - initial) * progress
 
-    def _sparse_future_gesture_alpha(self, epoch: int) -> float:
+    def _dense_future_gesture_alpha(self, epoch: int) -> float:
         """Rides ``_regret_alpha``'s ramp shape, rescaled to its own weight.
 
         Reuses ``regret_start_epoch``/``regret_ramp_epochs``/
-        ``regret_initial_weight`` rather than introducing a second schedule:
-        this term only ever activates once (and proportionally to how far
-        into) the dense regret term already has, just scaled to
-        ``sparse_future_gesture_weight`` instead of ``regret_weight``.
+        ``regret_initial_weight`` rather than introducing a second
+        schedule: this term only ever activates once (and proportionally
+        to how far into) the dense speech/text regret term already has,
+        just scaled to ``dense_future_gesture_weight`` instead of
+        ``regret_weight``.
         """
-
-        if self.sparse_future_gesture_weight <= 0:
-            return 0.0
-        dense_alpha = self._regret_alpha(epoch)
-        dense_maximum = float(self.args.regret_weight)
-        if dense_maximum <= 0:
-            return 0.0
-        progress = dense_alpha / dense_maximum
-        return progress * self.sparse_future_gesture_weight
-
-    def _dense_future_gesture_alpha(self, epoch: int) -> float:
-        """Rides ``_regret_alpha``'s ramp shape too, rescaled to its own
-        weight -- same rationale as ``_sparse_future_gesture_alpha``."""
 
         if self.dense_future_gesture_weight <= 0:
             return 0.0
@@ -402,48 +318,6 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         mask[:, upper_k:upper_k + lower_k, :] = True
         return mask
 
-    def _select_sparse_future_gesture_target_times(
-        self,
-        token_loss_mask,
-        *,
-        split,
-        epoch,
-        iteration,
-    ):
-        """One deterministic target position per sample.
-
-        Same hash-based selection ``UpperFaceLowerGTDM3RegretTrainer`` uses
-        for its single-target-per-sample KL: not random-per-call, so the
-        same (epoch, iteration, rank, batch-row) always maps to the same
-        target, which keeps runs reproducible and comparable across ranks.
-        """
-
-        batch = token_loss_mask.shape[0]
-        valid_lengths = token_loss_mask[:, 0].sum(dim=-1).long()
-        maximum_targets = (
-            valid_lengths - self.sparse_future_gesture_horizon_tokens - 1
-        )
-        if (maximum_targets < 0).any():
-            raise ValueError(
-                "Sequence is too short for the sparse future-gesture "
-                f"horizon: valid lengths={valid_lengths.tolist()}, "
-                f"horizon={self.sparse_future_gesture_horizon_tokens} "
-                "gesture tokens."
-            )
-        offsets = (
-            torch.arange(batch, device=token_loss_mask.device)
-            + iteration * batch
-            + int(self.args.random_seed)
-        )
-        if split == "train":
-            offsets = (
-                offsets
-                + epoch * 1_000_003
-                + self.global_rank * 97_409
-            )
-        hashed = (offsets * 48_271 + 1) % 2_147_483_647
-        return hashed % (maximum_targets + 1)
-
     @staticmethod
     def _valid_position_mask(pad_loss_mask):
         """``[B, T]`` bool, True == genuine (non-padding) position.
@@ -456,24 +330,6 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         """
 
         return pad_loss_mask[:, 0, :].bool()
-
-    @staticmethod
-    def _sparse_position_mask(pad_loss_mask, target_times):
-        """``[B,K,T]`` mask, True only at each sample's selected timestep.
-
-        Still respects ordinary validity (PAD / dropped body parts) at that
-        position -- a selected target that happens to land on a dropped
-        lower/face codebook contributes nothing for that codebook, exactly
-        like the dense term's masking.
-        """
-
-        B, K, T = pad_loss_mask.shape
-        position = torch.zeros(
-            B, T, dtype=torch.bool, device=pad_loss_mask.device,
-        )
-        position[torch.arange(B, device=pad_loss_mask.device), target_times] = True
-        position = position.unsqueeze(1).expand(-1, K, -1)
-        return position & pad_loss_mask.bool()
 
     @staticmethod
     def _regret_stat_dict(student_logits, teacher_logits, targets, temperature):
@@ -578,48 +434,6 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
                 targets[:, 1:],
                 valid_mask[:, 1:],
                 name_map=self._DEPTH_METRIC_NAMES,
-            )
-
-    def _update_sparse_future_gesture_metrics(
-        self,
-        *,
-        split,
-        raw_kl,
-        weighted_kl,
-        alpha,
-        student_logits,
-        teacher_logits,
-        targets,
-        valid_mask,
-    ):
-        self.tracker.update_meter(
-            "sparse_future_gesture_loss", split, float(raw_kl.detach().item()),
-        )
-        self.tracker.update_meter(
-            "sparse_future_gesture_weighted",
-            split,
-            float(weighted_kl.detach().item()),
-        )
-        self.tracker.update_meter(
-            "sparse_future_gesture_alpha", split, float(alpha),
-        )
-
-        self._update_slice_metrics(
-            split,
-            student_logits[:, 0],
-            teacher_logits[:, 0],
-            targets[:, 0],
-            valid_mask[:, 0],
-            name_map=self._SPARSE_Q0_METRIC_NAMES,
-        )
-        if student_logits.shape[1] > 1:
-            self._update_slice_metrics(
-                split,
-                student_logits[:, 1:],
-                teacher_logits[:, 1:],
-                targets[:, 1:],
-                valid_mask[:, 1:],
-                name_map=self._SPARSE_DEPTH_METRIC_NAMES,
             )
 
     def _update_dense_future_gesture_metrics(
@@ -730,94 +544,6 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         )
         return weighted_kl
 
-    def _compute_sparse_future_gesture_regret(
-        self,
-        *,
-        split,
-        logits,
-        gesture_tokens,
-        pad_loss_mask,
-        epoch,
-        iteration,
-        input_codes,
-        audio_codes,
-        text_codes,
-        sum_condition,
-        sample_ids=None,
-    ):
-        del sample_ids
-        alpha = self._sparse_future_gesture_alpha(epoch)
-        if alpha <= 0:
-            self.tracker.update_meter(
-                "sparse_future_gesture_alpha", split, 0.0,
-            )
-            return None
-
-        student = self._student_model()
-        real_vocab = int(self.modelout_ignore_index)
-        target_times = self._select_sparse_future_gesture_target_times(
-            pad_loss_mask, split=split, epoch=epoch, iteration=iteration,
-        )
-        ca_depth_padding_mask = self._build_ca_depth_padding_mask(
-            gesture_tokens,
-        )
-        teacher_temp_logits, teacher_depth_logits = (
-            forward_masked_target_teacher_view(
-                student,
-                input_codes=input_codes,
-                target_codes=gesture_tokens,
-                target_times=target_times,
-                audio_codes=audio_codes,
-                text_codes=text_codes,
-                sum_condition=sum_condition,
-                horizon_tokens=self.sparse_future_gesture_horizon_tokens,
-                past_context_tokens=(
-                    self.sparse_future_gesture_past_context_tokens
-                ),
-                mask_token_id=self.modelout_ignore_index,
-                valid_position_mask=self._valid_position_mask(pad_loss_mask),
-                ca_depth_padding_mask=ca_depth_padding_mask,
-                include_depth_levels=self.regret_include_depth_levels,
-                depth_input_codes=self._teacher_depth_input_codes(
-                    split, input_codes,
-                ),
-            )
-        )
-        if self.regret_include_depth_levels:
-            teacher_logits = torch.cat(
-                [teacher_temp_logits, teacher_depth_logits], dim=1,
-            )
-        else:
-            teacher_logits = teacher_temp_logits
-
-        K = teacher_logits.shape[1]
-        student_logits = logits[:, :K, :, :real_vocab]
-        teacher_logits = teacher_logits[:, :, :, :real_vocab]
-        position_mask = self._sparse_position_mask(
-            pad_loss_mask[:, :K], target_times,
-        )
-        targets = gesture_tokens[:, :K]
-
-        raw_kl = dense_regret_kl(
-            student_logits,
-            teacher_logits,
-            position_mask,
-            temperature=float(self.args.regret_temperature),
-        )
-        weighted_kl = raw_kl * alpha
-
-        self._update_sparse_future_gesture_metrics(
-            split=split,
-            raw_kl=raw_kl,
-            weighted_kl=weighted_kl,
-            alpha=alpha,
-            student_logits=student_logits,
-            teacher_logits=teacher_logits,
-            targets=targets,
-            valid_mask=position_mask,
-        )
-        return weighted_kl
-
     def _compute_dense_future_gesture_regret(
         self,
         *,
@@ -853,6 +579,7 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
                 text_codes=text_codes,
                 sum_condition=sum_condition,
                 valid_position_mask=self._valid_position_mask(pad_loss_mask),
+                horizon_tokens=self.dense_future_gesture_horizon_tokens,
                 ca_depth_padding_mask=ca_depth_padding_mask,
                 include_depth_levels=self.regret_include_depth_levels,
                 depth_input_codes=self._teacher_depth_input_codes(
@@ -935,22 +662,6 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         else:
             self.tracker.update_meter("regret_alpha", "train", 0.0)
 
-        if self.sparse_future_gesture_weight > 0:
-            sparse_weighted = self._compute_sparse_future_gesture_regret(
-                split="train",
-                logits=logits,
-                gesture_tokens=gesture_tokens,
-                pad_loss_mask=pad_loss_mask,
-                epoch=epoch,
-                iteration=iteration,
-                **batch_context,
-            )
-            if sparse_weighted is not None:
-                total = (
-                    sparse_weighted if total is None
-                    else total + sparse_weighted
-                )
-
         if self.dense_future_gesture_weight > 0:
             dense_fg_weighted = self._compute_dense_future_gesture_regret(
                 split="train",
@@ -980,7 +691,7 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
             pad_loss_mask,
         )
         epoch = int(batch_context.pop("epoch"))
-        iteration = int(batch_context.pop("iteration", 0))
+        batch_context.pop("iteration", None)
         batch_context.pop("sample_ids", None)
         alpha = self._regret_alpha(epoch)
         if alpha > 0:
@@ -995,17 +706,6 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         else:
             self.tracker.update_meter(
                 "regret_alpha", "val", max(0.0, alpha),
-            )
-
-        if self.sparse_future_gesture_weight > 0:
-            self._compute_sparse_future_gesture_regret(
-                split="val",
-                logits=logits,
-                gesture_tokens=gesture_tokens,
-                pad_loss_mask=pad_loss_mask,
-                epoch=epoch,
-                iteration=iteration,
-                **batch_context,
             )
 
         if self.dense_future_gesture_weight > 0:

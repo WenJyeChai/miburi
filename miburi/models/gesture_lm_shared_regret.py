@@ -18,24 +18,24 @@ is future speech/text conditioning, which lives in a different stream than
 the gesture target being predicted, so (unlike the paper's own-stream
 teacher) no target-position masking is required to avoid leaking the answer.
 
-``forward_masked_target_teacher_view`` is the complementary, same-stream
-mechanism: it relaxes gesture *self*-attention instead of cross-attention,
-and does need target-position masking (mirroring the paper's Eq. 17)
-because the privileged information now lives in the same stream as the
-prediction target. It is deliberately sparse (one selected timestep per
-sample) rather than dense, and cross-attention stays causal in that view so
-its signal isn't conflated with the speech/text mechanism above.
+``forward_dense_future_gesture_teacher_view`` is the complementary,
+same-stream mechanism: it relaxes gesture *self*-attention instead of
+cross-attention, and does need target-position masking (mirroring the
+paper's Eq. 17) because the privileged information now lives in the same
+stream as the prediction target -- implemented *literally* as the paper's
+own mask: a per-query attention-bias exclusion of the ``horizon_tokens``
+keys starting at that query's own target (``horizon_tokens=1``, the
+default, matches Eq. 17 exactly; larger values widen the guard, the same
+knob the old sparse mechanism's ``horizon_tokens`` offered, just applied
+densely to every position), over otherwise completely unmodified tokens
+(no token substitution). Because the exclusion is a property of the
+query-key pair rather than the input tokens, every position gets a valid
+teacher view in a single forward pass regardless of the window's width,
+matching the density of the cross-attention mechanism above. Cross-attention
+stays causal in this view so its signal isn't conflated with the speech/text
+mechanism above.
 
-``forward_dense_future_gesture_teacher_view`` is the dense counterpart: it
-implements the paper's Eq. 17 mask *literally* -- a per-query attention-bias
-exclusion of just the one key holding that query's own target, over
-otherwise completely unmodified tokens -- rather than
-``forward_masked_target_teacher_view``'s token-substitution-based masking.
-Because the exclusion is a property of the query-key pair rather than the
-input tokens, every position gets a valid teacher view in a single forward
-pass, matching the density of the cross-attention mechanism above at
-roughly the same per-pass cost as the sparse gesture mechanism. This
-required two small, additive changes outside this module:
+Getting this required two small, additive changes outside this module:
 ``StreamingMultiheadCrossAttention.forward`` gained an optional
 ``extra_attn_bias`` parameter (ANDed into its internally-computed mask,
 ``miburi/modules/transformer.py``), and ``GTemporalDepthModel3.forward_temporal``
@@ -50,8 +50,6 @@ import typing as tp
 
 import torch
 import torch.nn.functional as F
-
-from .gesture_lm_future_gesture import build_masked_future_gesture_inputs
 
 
 def _prepend_initial_and_shift(model, codes: torch.Tensor) -> torch.Tensor:
@@ -105,22 +103,34 @@ def _shifted_key_padding_mask(
     return ~shifted_valid
 
 
-def _build_target_exclusion_bias(seq_len: int, device) -> torch.Tensor:
+def _build_target_exclusion_bias(
+    seq_len: int, device, *, horizon_tokens: int = 1,
+) -> torch.Tensor:
     """``[1, 1, seq_len, seq_len]`` boolean mask, True == allowed to attend,
-    False only where ``key == query + 1`` -- the shifted-sequence position
-    holding the query's own prediction target.
+    False for keys in ``[query+1, query+1+horizon_tokens)`` -- the
+    shifted-sequence positions holding the query's own prediction target
+    and, for ``horizon_tokens > 1``, the immediately following ones too.
+    Keys at or before the query (``j <= i``, its genuine causal history)
+    are never excluded, so no row can ever end up fully masked regardless
+    of ``horizon_tokens``.
 
-    Mirrors the paper's GlobalRegret mask (Eq. 17: ``M[i, i+1] = -inf``,
-    everywhere else 0) exactly, including the property it does *not*
-    provide: this is a pure attention-level exclusion over otherwise
-    intact, unmodified tokens, so it inherits the same leak-permissive
-    caveat as ``forward_masked_target_teacher_view`` (see its docstring) --
-    it does not protect against MIBURI's causal gesture codec smearing
-    information about a hidden position into a visible one.
+    With ``horizon_tokens=1`` (the default) this is exactly the paper's
+    GlobalRegret mask (Eq. 17: ``M[i, i+1] = -inf``, everywhere else 0).
+    Larger values widen the guard the same way the old sparse mechanism's
+    ``horizon_tokens`` did, just applied to every query position in this
+    one dense pass instead of one sampled target per sample. Either way
+    this is a pure attention-level exclusion over otherwise intact,
+    unmodified tokens: it inherits the module's leak-permissive caveat
+    (see the module docstring) -- it does not protect against MIBURI's
+    causal gesture codec smearing information about a hidden position
+    into a visible one.
     """
 
+    if horizon_tokens < 1:
+        raise ValueError("horizon_tokens must be at least one.")
     positions = torch.arange(seq_len, device=device)
-    exclude = positions.view(-1, 1) + 1 == positions.view(1, -1)
+    delta = positions.view(1, -1) - positions.view(-1, 1)  # key - query
+    exclude = (delta >= 1) & (delta <= horizon_tokens)
     allow = ~exclude
     return allow.view(1, 1, seq_len, seq_len)
 
@@ -294,97 +304,6 @@ def forward_teacher_view(
 
 
 @torch.no_grad()
-def forward_masked_target_teacher_view(
-    model,
-    *,
-    input_codes: torch.Tensor,
-    target_codes: torch.Tensor,
-    target_times: torch.Tensor,
-    audio_codes: torch.Tensor,
-    text_codes: torch.Tensor,
-    sum_condition: torch.Tensor,
-    horizon_tokens: int,
-    past_context_tokens: int,
-    mask_token_id: int,
-    valid_position_mask: torch.Tensor,
-    ca_depth_padding_mask: torch.Tensor | None = None,
-    include_depth_levels: bool = True,
-    depth_input_codes: torch.Tensor | None = None,
-) -> tp.Tuple[torch.Tensor, torch.Tensor | None]:
-    """Sparse, masked-target, bidirectional-self-attention teacher view.
-
-    One selected timestep per sample (``target_times``) has its input
-    tokens hidden, across every codebook, for ``[t, t+horizon_tokens)``;
-    every other position -- including the true future beyond that guard --
-    stays the intact, ordinary ground-truth input. Gesture self-attention
-    is relaxed to bidirectional for this call so the hidden position can
-    actually see that surrounding context; cross-attention to audio/text
-    stays causal, isolating future *gesture* information from the future
-    speech/text signal ``forward_teacher_view`` already supplies elsewhere.
-
-    With ``horizon_tokens=1`` this hides only the literal target token --
-    the paper's own Eq. 17 masking, applied to the gesture stream. Unlike
-    the reset-future trainers' privileged views, the exposed future here is
-    still the intact per-clip codec encoding: this function makes no
-    attempt to prevent the causal codec's own receptive field from leaking
-    information about the guarded interval into tokens just beyond it.
-    That's deliberate -- it's a cheap, maximally-permissive upper-bound
-    check for whether future gesture information helps at all, before
-    paying for a leak-safe (reset-encoded) version.
-
-    ``valid_position_mask`` (``[B, T]``, True == genuine, non-padding
-    position) is required: causal attention can never structurally reach
-    forward into within-buffer padding, but this call makes self-attention
-    bidirectional, so without an explicit padding mask a valid query could
-    attend into padding for any clip shorter than the full buffer.
-
-    Runs entirely under ``no_grad``, and is sparse over ``T`` (self-attention
-    is still computed at every position internally, but only the selected
-    ``target_times`` positions are meaningful and expected to be read out).
-    """
-
-    masked_codes = build_masked_future_gesture_inputs(
-        input_codes,
-        target_codes,
-        target_times,
-        horizon_tokens=horizon_tokens,
-        past_context_tokens=past_context_tokens,
-        mask_token_id=mask_token_id,
-    )
-    temporal_sequence = _prepend_initial_and_shift(model, masked_codes)
-    seq_len = temporal_sequence.shape[-1]
-    temporal_sum_condition = sum_condition.unsqueeze(1).expand(-1, seq_len)
-    audio_condition, text_condition = _process_conditions_squeezed(
-        model, audio_codes, text_codes,
-    )
-    key_padding_mask = _shifted_key_padding_mask(valid_position_mask, seq_len)
-
-    with relaxed_temporal_self_attention(model.temporal_transformer):
-        teacher_transformer_out, teacher_temp_logits = model.forward_temporal(
-            temporal_sequence,
-            audio_condition=audio_condition,
-            text_condition=text_condition,
-            sum_condition=temporal_sum_condition,
-            key_padding_mask=key_padding_mask,
-        )
-
-    if not include_depth_levels:
-        return teacher_temp_logits, None
-
-    teacher_depth_logits = _forward_depth_branch(
-        model,
-        teacher_transformer_out=teacher_transformer_out,
-        input_codes=input_codes,
-        depth_input_codes=depth_input_codes,
-        audio_condition=audio_condition,
-        text_condition=text_condition,
-        sum_condition=sum_condition,
-        ca_depth_padding_mask=ca_depth_padding_mask,
-    )
-    return teacher_temp_logits, teacher_depth_logits
-
-
-@torch.no_grad()
 def forward_dense_future_gesture_teacher_view(
     model,
     *,
@@ -393,6 +312,7 @@ def forward_dense_future_gesture_teacher_view(
     text_codes: torch.Tensor,
     sum_condition: torch.Tensor,
     valid_position_mask: torch.Tensor,
+    horizon_tokens: int = 1,
     ca_depth_padding_mask: torch.Tensor | None = None,
     include_depth_levels: bool = True,
     depth_input_codes: torch.Tensor | None = None,
@@ -402,24 +322,23 @@ def forward_dense_future_gesture_teacher_view(
     The paper's own GlobalRegret mechanism (Eq. 17), applied to MIBURI's
     gesture stream: every position gets a simultaneous, valid teacher view
     in one forward pass, via a per-query attention-bias exclusion (block
-    only the one key holding that query's own target, via
-    ``_build_target_exclusion_bias``) rather than
-    ``forward_masked_target_teacher_view``'s single selected, token-
-    substituted target. No token is ever replaced or corrupted here -- the
-    true codes are always the input; only the attention pattern changes,
-    which is what makes every position simultaneously valid in one pass.
+    the ``horizon_tokens`` keys starting at each query's own target, via
+    ``_build_target_exclusion_bias``) rather than a single selected,
+    token-substituted target. No token is ever replaced or corrupted here
+    -- the true codes are always the input; only the attention pattern
+    changes, which is what makes every position simultaneously valid in
+    one pass. ``horizon_tokens=1`` (the default) hides only the literal
+    target; larger values widen the guard for every position at once.
 
     Requires the untruncated sequence (``_prepend_initial_full``, MIBURI's
     ``temporal_include_last_input=True`` path) so the very last position
     also has a key to exclude -- the plain truncated shift silently drops
-    it. Requires ``valid_position_mask`` for the same reason
-    ``forward_masked_target_teacher_view`` does: bidirectional attention can
+    it. Requires ``valid_position_mask`` since bidirectional attention can
     reach into within-buffer padding that causal attention never could.
 
-    Same leak-permissive caveat as ``forward_masked_target_teacher_view``:
-    this does not protect against MIBURI's causal gesture codec smearing
-    information about a hidden position into a visible later one. Runs
-    entirely under ``no_grad``.
+    Leak-permissive by design: this does not protect against MIBURI's
+    causal gesture codec smearing information about a hidden position
+    into a visible later one. Runs entirely under ``no_grad``.
     """
 
     _, _, T = input_codes.shape
@@ -429,7 +348,9 @@ def forward_dense_future_gesture_teacher_view(
     audio_condition, text_condition = _process_conditions_squeezed(
         model, audio_codes, text_codes,
     )
-    self_attn_bias = _build_target_exclusion_bias(seq_len, full_sequence.device)
+    self_attn_bias = _build_target_exclusion_bias(
+        seq_len, full_sequence.device, horizon_tokens=horizon_tokens,
+    )
     key_padding_mask = _shifted_key_padding_mask(valid_position_mask, seq_len)
 
     with relaxed_temporal_self_attention(model.temporal_transformer):

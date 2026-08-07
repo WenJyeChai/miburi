@@ -444,57 +444,29 @@ covers the composition-specific piece: that `depth_input_codes` only changes
 the teacher's depth branch (never the temporal branch), and that a mismatched
 shape is rejected.
 
-##### + sparse future-gesture regret (optional, off by default)
+##### + dense future-gesture regret (the paper's actual Eq. 17 mechanism, optional, off by default)
 
 Both `UpperFaceLowerGTDM3SharedRegretTrainer` and its RVQ subclass also
-support a second, independent regret term: a masked-target, bidirectional
-gesture-*self*-attention teacher view, complementary to the dense
-speech/text one above. One selected timestep per sample has its input
-tokens hidden (`--sparse_future_gesture_horizon_tokens`, default 1 -- masks
-only the literal target token, mirroring the paper's own Eq. 17 masking
-applied to the gesture stream); gesture self-attention is relaxed to
-bidirectional for that call so the hidden position can see the intact true
-future beyond the guard, while cross-attention to audio/text stays causal,
-so this term's signal isn't conflated with the dense one. It is off by
-default (`--sparse_future_gesture_weight 0`) -- enabling it adds a second
-extra forward pass and rides the same ramp shape as `regret_alpha`
-(`regret_start_epoch`/`regret_ramp_epochs`), rescaled to its own weight:
-
-```bash
-CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 \
-python scripts/train.py \
-    --config configs/gtdm3_sharedregret_global_audiotext_ufl_25_beatx_small.yaml \
-    --sparse_future_gesture_weight 1.0 \
-    --wandb True --wandb_mode online \
-    --wandb_project miburi --wandb_group student-sharedregret-global-fg
-```
-
-Unlike the reset-future trainers' privileged views, this one makes **no**
-attempt to prevent the causal gesture codec's own receptive field from
-leaking information about the guarded interval into tokens just beyond it
--- it's a deliberately cheap, maximally-permissive upper-bound check for
-whether future gesture information helps at all before paying for the
-leak-safe (reset-encoded) version those trainers use. `sparse_fg_*` metrics
-(mirroring the dense term's `regret_*` diagnostics) are logged separately so
-this signal's effect can be read independently of the dense term's.
-`scripts/smoke_test_gesture_lm_shared_regret.py` covers the self-attention
-mask toggle/restore (including that cross-attention is left untouched) and
-that this teacher view is gradient-free.
-
-##### + dense future-gesture regret (the paper's actual Eq. 17 mechanism)
-
-`--dense_future_gesture_weight` is a third, independent term implementing
+support a second, independent regret term (`--dense_future_gesture_weight`,
+default 0): a bidirectional gesture-*self*-attention teacher view,
+complementary to the dense speech/text one above. It implements
 GlobalRegret's masking *literally*, the way the paper's own reference
-implementation does it: a per-query attention-bias exclusion of only the
-one key holding that query's own prediction target, over otherwise
-completely unmodified tokens -- not the token-substitution masking
-`--sparse_future_gesture_weight` uses. Because the exclusion is a property
-of the query-key pair rather than the input, every position gets a valid
-teacher view in a single forward pass, at roughly the same per-pass cost as
-the sparse term (self-attention already processes the whole sequence
-regardless of how many positions are usable afterward). Cross-attention
-stays causal here too, same isolation rationale as the sparse term; the two
-can be enabled together or independently.
+implementation does it -- a per-query attention-bias exclusion of the
+`--dense_future_gesture_horizon_tokens` keys starting at that query's own
+prediction target (default 1, matching Eq. 17 exactly: only the literal
+target), over otherwise completely unmodified tokens (no token substitution
+or masked span). Because the exclusion is a property of the query-key pair
+rather than the input, every position gets a valid teacher view in a single
+forward pass regardless of the window's width -- widening
+`horizon_tokens` beyond 1 hides more of the immediate future for every
+position at once (the same guard-width knob the old sparse mechanism's
+`horizon_tokens` offered, before it was removed once this dense version
+proved out; see git history if that per-sample-target design is ever worth
+revisiting). Cross-attention to audio/text stays causal in this view, so
+its signal isn't conflated with the dense speech/text term above; enabling
+it adds one extra forward pass and rides the same ramp shape as
+`regret_alpha` (`regret_start_epoch`/`regret_ramp_epochs`), rescaled to its
+own weight:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 \
@@ -524,17 +496,23 @@ Two correctness properties specific to this mechanism, both covered by
   would otherwise silently give the last position no exclusion at all.
 - Making self-attention bidirectional means a valid query can now reach
   *forward* into within-buffer padding, something causal attention could
-  never structurally do. Both this mechanism and the sparse one above
-  therefore require an explicit padding-derived `key_padding_mask`
-  (built from `pad_loss_mask[:, 0, :]`) -- retrofitted onto the sparse
-  mechanism too, since the gap predates this addition and was live in
-  already-training runs.
+  never structurally do. This requires an explicit padding-derived
+  `key_padding_mask` (built from `pad_loss_mask[:, 0, :]`).
 
-Same leak-permissive caveat as the sparse term applies here unchanged:
-neither mechanism protects against MIBURI's causal gesture codec smearing
-information about a hidden position into a visible later one -- that's
-what the leak-safe reset-encoded views (`build_reset_future_teacher_inputs`)
-exist for, at a much higher per-step cost this mechanism deliberately avoids.
+It makes **no** attempt to prevent MIBURI's causal gesture codec's own
+receptive field from leaking information about a hidden position into a
+visible later one -- that's what the leak-safe reset-encoded views
+(`build_reset_future_teacher_inputs`) exist for, at a much higher per-step
+cost this mechanism deliberately avoids. `dense_fg_*` metrics (mirroring
+the dense speech/text term's `regret_*` diagnostics) are logged separately
+so this signal's effect can be read independently.
+
+An earlier, sparse (single-target-per-sample, token-substitution-based)
+version of this mechanism was tried first and later removed once this dense
+version -- which covers every position in one pass, at roughly the same
+per-pass cost -- was confirmed to work; see git history if that design is
+ever worth revisiting (e.g. its `horizon_tokens` guard-width knob has no
+dense equivalent).
 
 #### Experimental three-q0 global-C2F Gesture LM
 
