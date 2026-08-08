@@ -51,19 +51,29 @@ def create_scheduler(args, optimizer, **kwargs):
             gamma=args.decay_rate,
         )
     elif args.lr_policy == "cosine_delay":
-        start_epoch = int(args.lr_cosine_start_epoch)
+        # Linear warmup 0 -> lr_base over [0, warmup_epochs) if warmup_epochs
+        # > 0 (reuses the previously-unused --warmup_epochs; --warmup_lr is
+        # NOT used here -- the warmup peak is always lr_base, matching "warm
+        # up to lr_base, then decay to lr_min" rather than overshooting past
+        # lr_base). Decay then always starts right where warmup ends
+        # (lr_cosine_start_epoch is only meaningful when warmup_epochs == 0,
+        # for a flat-then-decay shape with no ramp-up).
+        warmup_epochs = int(getattr(args, "warmup_epochs", 0) or 0)
+        start_epoch = max(warmup_epochs, int(args.lr_cosine_start_epoch))
         end_epoch = int(args.lr_cosine_end_epoch)
         if end_epoch < 0:
             end_epoch = num_epochs
         if end_epoch <= start_epoch:
             raise ValueError(
                 "lr_cosine_end_epoch must be greater than "
-                f"lr_cosine_start_epoch (got start={start_epoch}, "
-                f"end={end_epoch})."
+                "max(warmup_epochs, lr_cosine_start_epoch) (got "
+                f"start={start_epoch}, end={end_epoch})."
             )
         eta_min_ratio = args.lr_min / args.lr_base
 
         def _cosine_delay_factor(epoch: int) -> float:
+            if warmup_epochs > 0 and epoch < warmup_epochs:
+                return max(0.0, epoch / warmup_epochs)
             if epoch <= start_epoch:
                 return 1.0
             progress = min(1.0, (epoch - start_epoch) / (end_epoch - start_epoch))
