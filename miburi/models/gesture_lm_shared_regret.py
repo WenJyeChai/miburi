@@ -304,6 +304,80 @@ def forward_teacher_view(
 
 
 @torch.no_grad()
+def forward_linguistic_teacher_view(
+    model,
+    *,
+    input_codes: torch.Tensor,
+    audio_codes: torch.Tensor,
+    text_codes: torch.Tensor,
+    sum_condition: torch.Tensor,
+    cross_attn_bias: torch.Tensor,
+    ca_depth_padding_mask: torch.Tensor | None = None,
+    include_depth_levels: bool = True,
+    depth_input_codes: torch.Tensor | None = None,
+) -> tp.Tuple[torch.Tensor, torch.Tensor | None]:
+    """Run a word/sentence-bounded privileged audio/text teacher view.
+
+    ``cross_attn_bias`` is ``[B,1,T,S]`` with ``True`` marking condition
+    keys visible to each gesture query. Gesture self-attention remains
+    causal. Temporal cross-attention is temporarily made noncausal so this
+    per-query mask can grant only the requested bounded future access.
+
+    The pass is stop-gradient and introduces no parameters. The depth branch
+    receives the privileged temporal hidden state but otherwise keeps the
+    same aligned condition slice and within-frame prefix as the student.
+    """
+
+    temporal_sequence = _prepend_initial_and_shift(model, input_codes)
+    temporal_sum_condition = sum_condition.unsqueeze(1).expand(
+        -1, temporal_sequence.shape[-1],
+    )
+    audio_condition, text_condition = _process_conditions_squeezed(
+        model, audio_codes, text_codes,
+    )
+    expected = (
+        input_codes.shape[0],
+        1,
+        temporal_sequence.shape[-1],
+        audio_condition.shape[1],
+    )
+    if cross_attn_bias.shape != expected:
+        raise ValueError(
+            "cross_attn_bias must have shape "
+            f"{expected}, got {tuple(cross_attn_bias.shape)}."
+        )
+    if text_condition.shape[1] != audio_condition.shape[1]:
+        raise ValueError(
+            "Audio/text condition lengths differ: "
+            f"{audio_condition.shape[1]} and {text_condition.shape[1]}."
+        )
+
+    with relaxed_temporal_cross_attention(model.temporal_transformer):
+        teacher_transformer_out, teacher_temp_logits = model.forward_temporal(
+            temporal_sequence,
+            audio_condition=audio_condition,
+            text_condition=text_condition,
+            sum_condition=temporal_sum_condition,
+            cross_attn_bias=cross_attn_bias,
+        )
+
+    if not include_depth_levels:
+        return teacher_temp_logits, None
+
+    teacher_depth_logits = _forward_depth_branch(
+        model,
+        teacher_transformer_out=teacher_transformer_out,
+        input_codes=input_codes,
+        depth_input_codes=depth_input_codes,
+        audio_condition=audio_condition,
+        text_condition=text_condition,
+        sum_condition=sum_condition,
+        ca_depth_padding_mask=ca_depth_padding_mask,
+    )
+    return teacher_temp_logits, teacher_depth_logits
+
+
+@torch.no_grad()
 def forward_dense_future_gesture_teacher_view(
     model,
     *,

@@ -1243,6 +1243,7 @@ class StreamingTransformerDecoderLayer(StreamingTransformerLayer):
                 memories: tp.List[torch.Tensor],
                 query_padding_mask: tp.Optional[torch.Tensor] = None,
                 key_padding_mask: tp.Optional[torch.Tensor] = None,
+                cross_attn_bias: tp.Optional[torch.Tensor] = None,
                 ):
         x_orig = x
 
@@ -1260,7 +1261,8 @@ class StreamingTransformerDecoderLayer(StreamingTransformerLayer):
                 memory, 
                 memory, 
                 query_padding_mask=query_padding_mask, 
-                key_padding_mask=key_padding_mask
+                key_padding_mask=key_padding_mask,
+                extra_attn_bias=cross_attn_bias,
             )
             if self.dropout > 0: 
                 update = self.cross_attn_dp[mem](update)
@@ -1292,6 +1294,7 @@ class StreamingTransformerDecoderLayer(StreamingTransformerLayer):
                 ca_key_padding_mask: tp.Optional[torch.Tensor] = None,
                 query_padding_mask: tp.Optional[torch.Tensor] = None,
                 self_attn_bias: tp.Optional[torch.Tensor] = None,
+                cross_attn_bias: tp.Optional[torch.Tensor] = None,
                 ):
         with ExitStack() as stack:
             if x.device.type != 'cuda':
@@ -1301,7 +1304,13 @@ class StreamingTransformerDecoderLayer(StreamingTransformerLayer):
                 x, key_padding_mask=key_padding_mask, self_attn_bias=self_attn_bias,
             )
             # print("crossattn")
-            x = self._ca_block(x, memories, key_padding_mask=ca_key_padding_mask, query_padding_mask=ca_query_padding_mask)
+            x = self._ca_block(
+                x,
+                memories,
+                key_padding_mask=ca_key_padding_mask,
+                query_padding_mask=ca_query_padding_mask,
+                cross_attn_bias=cross_attn_bias,
+            )
             x = self._ff_block(x)
             state = self._streaming_state
             if state:

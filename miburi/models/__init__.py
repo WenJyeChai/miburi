@@ -31,6 +31,7 @@ from .gesture_lm_regret import (
 from .gesture_lm_shared_regret import (
     dense_regret_kl,
     forward_dense_future_gesture_teacher_view,
+    forward_linguistic_teacher_view,
     forward_teacher_view,
     relaxed_temporal_cross_attention,
     relaxed_temporal_self_attention,

@@ -309,6 +309,37 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         del split
         return input_codes
 
+    def _forward_regret_teacher_view(
+        self,
+        *,
+        split,
+        input_codes,
+        audio_codes,
+        text_codes,
+        sum_condition,
+        ca_depth_padding_mask,
+        depth_input_codes,
+        sample_ids=None,
+    ):
+        """Extension point for the privileged audio/text attention policy.
+
+        The existing trainer keeps unrestricted GlobalRegret. Linguistic
+        subclasses override only this method, leaving the CE/KL objective,
+        metrics, stochastic RVQ prefixes and schedule unchanged.
+        """
+
+        del split, sample_ids
+        return forward_teacher_view(
+            self._student_model(),
+            input_codes=input_codes,
+            audio_codes=audio_codes,
+            text_codes=text_codes,
+            sum_condition=sum_condition,
+            ca_depth_padding_mask=ca_depth_padding_mask,
+            include_depth_levels=self.regret_include_depth_levels,
+            depth_input_codes=depth_input_codes,
+        )
+
     def _build_ca_depth_padding_mask(self, gesture_tokens):
         if not getattr(self.args, "drop_lower_crossattn", False):
             return None
@@ -492,24 +523,25 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         sum_condition,
         sample_ids=None,
     ):
-        del sample_ids
         student = self._student_model()
         real_vocab = int(self.modelout_ignore_index)
 
         ca_depth_padding_mask = self._build_ca_depth_padding_mask(
             gesture_tokens,
         )
-        teacher_temp_logits, teacher_depth_logits = forward_teacher_view(
-            student,
-            input_codes=input_codes,
-            audio_codes=audio_codes,
-            text_codes=text_codes,
-            sum_condition=sum_condition,
-            ca_depth_padding_mask=ca_depth_padding_mask,
-            include_depth_levels=self.regret_include_depth_levels,
-            depth_input_codes=self._teacher_depth_input_codes(
-                split, input_codes,
-            ),
+        teacher_temp_logits, teacher_depth_logits = (
+            self._forward_regret_teacher_view(
+                split=split,
+                input_codes=input_codes,
+                audio_codes=audio_codes,
+                text_codes=text_codes,
+                sum_condition=sum_condition,
+                ca_depth_padding_mask=ca_depth_padding_mask,
+                depth_input_codes=self._teacher_depth_input_codes(
+                    split, input_codes,
+                ),
+                sample_ids=sample_ids,
+            )
         )
         if self.regret_include_depth_levels:
             teacher_logits = torch.cat(
@@ -636,7 +668,6 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
             epoch,
             iteration,
         )
-        batch_context.pop("sample_ids", None)
         alpha = self._regret_alpha(epoch)
         total = None
         if alpha > 0:
@@ -692,7 +723,6 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
         )
         epoch = int(batch_context.pop("epoch"))
         batch_context.pop("iteration", None)
-        batch_context.pop("sample_ids", None)
         alpha = self._regret_alpha(epoch)
         if alpha > 0:
             self._compute_regret(

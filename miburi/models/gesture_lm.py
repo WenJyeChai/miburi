@@ -495,6 +495,7 @@ class GTemporalDepthModel3(StreamingContainer):
             sum_condition: torch.Tensor | None = None,
             key_padding_mask: torch.Tensor | None = None,
             self_attn_bias: torch.Tensor | None = None,
+            cross_attn_bias: torch.Tensor | None = None,
         ):
         """
         Args:
@@ -505,6 +506,10 @@ class GTemporalDepthModel3(StreamingContainer):
                 through to the temporal transformer's gesture self-attention,
                 ANDed with whatever its causal/context/padding settings
                 already produce. None (the default) changes nothing.
+            cross_attn_bias: optional boolean mask (broadcastable to
+                [B, 1, T, S], True == allowed to attend) applied to both
+                audio and text cross-attention memories. None preserves the
+                released model path exactly.
         """
         
         B, K, T = sequence.shape
@@ -534,6 +539,7 @@ class GTemporalDepthModel3(StreamingContainer):
             memories=condition_tensors,
             key_padding_mask=key_padding_mask,
             self_attn_bias=self_attn_bias,
+            cross_attn_bias=cross_attn_bias,
         )
         if self.out_norm:
             transformer_out = self.out_norm(transformer_out)

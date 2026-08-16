@@ -162,6 +162,24 @@ def parse_args():
             "state instead of the student's. Default on."
         ),
     )
+    parser.add(
+        "--linguistic_regret_max_lookahead_seconds",
+        default=0.0,
+        type=float,
+        help=(
+            "Optional cap on word/sentence teacher lookahead in seconds. "
+            "Zero (default) reveals the complete enclosing boundary."
+        ),
+    )
+    parser.add(
+        "--linguistic_regret_transcript_subdir",
+        default="whisper_transcription",
+        type=str,
+        help=(
+            "Directory below --beatx_data_path containing <file_id>.json "
+            "Whisper transcripts for linguistic regret teachers."
+        ),
+    )
     # Dense future-gesture regret (UpperFaceLowerGTDM3SharedRegret*): the
     # paper's own Eq. 17 GlobalRegret mask (per-query attention-bias
     # exclusion of just that query's own target), applied to gesture

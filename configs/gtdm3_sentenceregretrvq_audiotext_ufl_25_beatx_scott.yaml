@@ -1,0 +1,113 @@
+# Shared-weight linguistic-boundary regret + stochastic RVQ depth training.
+# The deployed student remains causal. The stop-gradient teacher uses the
+# same weights and gesture history, but audio/text cross-attention may look
+# through the end of the enclosing Whisper segment (sentence) according to BEATX Whisper JSON.
+project_name: gtdm3_sentenceregretrvq_scott_bf16
+
+is_train: True
+ddp: False
+
+beatx_data_path: datasets/beat_english_v2.0.0/
+embody3d_path: datasets/embody_3d_aiagent/
+deps_path: assets_dep/
+
+cache_path: datasets/data_cache/embody3d_dyadic/database.hdf5
+beatx_cache_path: datasets/data_cache/beatx_gtdm3/database.hdf5
+embody3d_cache_path: datasets/data_cache/embody3d_dyadic/database.hdf5
+
+lowerbodycodec_ckpt: experiments/demoexp_release_lowercodec/last_440.safetensors
+upperbodycodec_ckpt: experiments/demoexp_release_uppercodec/last_180.safetensors
+facecodec_ckpt: experiments/demoexp_release_facecodec/last_100.safetensors
+
+is_continue: False
+out_path: ./experiments/
+dataset: unified
+pose_norm: False
+body_part: full
+
+motion_fps: 25
+lowertrans_nfeats: 61
+upperlower_nfeats: 258
+face_nfeats: 106
+
+random_seed: 2342
+pose_length: 250
+frame_chunk_size: 2
+audio_sr: 24000
+audio_fps: 24000
+
+gestureformer_layers: 4
+gestureformer_heads: 2
+gestureformer_depformer_layers: 2
+gestureformer_depformer_heads: 1
+
+transformer_layers: 8
+convblock_layers: 2
+transformer_heads: 4
+num_temp_classifiers: 1
+param_dtype: "bfloat16"
+optim_dtype: "float32"
+
+batch_size: 128
+lr_base: 1e-4
+loader_workers: 16
+grad_norm: 1.0
+opt: adamw
+lr_policy: step
+
+pretrain_warmup_epochs: 50
+inputtoken_noise_prob: 0
+memory_dropout_prob: 0.1
+memory_embnoise_prob: 0
+
+drop_lower_crossattn: True
+lower_bodypart_dropprob: 0.1
+
+gan_loss_weight: 0.0
+contrastive_loss_weight: 0.1
+genrecon_loss_weight: 0.0
+vad_guidance: True
+vad_use_face_logits: True
+vad_loss_weight: 0.05
+
+trainer: UpperFaceLowerGTDM3SentenceRegretRVQ
+face_loss_weight: 2.5
+dataset_ratio: scott_beatx_lowervalid
+
+textaudio_emb_freeze: False
+varying_frame_length: False
+align_first_frame_yaw: True
+
+# Shared-weight forward KL. This is dense over every valid timestep and,
+# with regret_include_depth_levels, every gesture RVQ level.
+regret_temperature: 1.0
+regret_weight: 1.0
+regret_initial_weight: 0.1
+regret_ramp_epochs: 15
+regret_include_depth_levels: True
+regret_start_epoch: 50
+
+# Zero means the complete enclosing Whisper segment (sentence) is visible. Set a positive
+# value to cap unusually long timestamp spans without changing the student.
+linguistic_regret_max_lookahead_seconds: 0.0
+linguistic_regret_transcript_subdir: whisper_transcription
+
+# The separate future-gesture teacher view stays disabled: this experiment
+# changes only the audio/text privilege.
+dense_future_gesture_weight: 0.0
+
+# Stochastic, geometry-aware training for k=1..K-1. q0 remains hard CE.
+kinematic_rvq_topk: 8
+kinematic_rvq_temperature: 0.5
+kinematic_rvq_sample_probability: 0.15
+kinematic_rvq_soft_target_weight: 0.5
+kinematic_rvq_start_epoch: 50
+kinematic_rvq_ramp_epochs: 50
+kinematic_rvq_distance_chunk_size: 4096
+
+epochs: 10000
+decay_epochs: 2000
+test_period: 250
+decay_rate: 0.8
+log_period: 10
+
