@@ -1176,6 +1176,7 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
                             output_path=gt_path,
                             fps=self.args.motion_fps,
                             mesh_color=(180, 54, 54, 255),
+                            track_subject=True,
                         )
                         render_smplx_debug_video(
                             smplx_model=self.smplx_model,
@@ -1189,6 +1190,7 @@ class _UpperFaceLowerGTDM3FutureGestureTrainer(
                             output_path=pred_path,
                             fps=self.args.motion_fps,
                             mesh_color=(36, 73, 156, 255),
+                            track_subject=True,
                         )
                         stitch_videos_hstack(
                             [gt_path, pred_path],

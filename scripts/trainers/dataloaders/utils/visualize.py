@@ -451,6 +451,95 @@ def _smplx_vertices_from_params(
     return np.concatenate(verts_all, axis=0)
 
 
+def _smooth_camera_signal(values: np.ndarray, alpha: float) -> np.ndarray:
+    """Zero-phase exponential smoothing for a per-frame camera signal."""
+    values = np.asarray(values, dtype=np.float32)
+    if values.shape[0] <= 1 or alpha >= 1.0:
+        return values.copy()
+
+    forward = values.copy()
+    for index in range(1, values.shape[0]):
+        forward[index] = alpha * values[index] + (1.0 - alpha) * forward[index - 1]
+
+    smoothed = forward.copy()
+    for index in range(values.shape[0] - 2, -1, -1):
+        smoothed[index] = alpha * forward[index] + (1.0 - alpha) * smoothed[index + 1]
+    return smoothed
+
+
+def _tracking_camera_poses(
+    vertices: np.ndarray,
+    base_camera_pose: np.ndarray,
+    width: int,
+    height: int,
+    yfov: float,
+    frame_padding: float = 0.12,
+    smoothing: float = 0.18,
+) -> np.ndarray:
+    """Build a smooth camera path that keeps one mesh sequence in frame.
+
+    Tracking is intentionally computed from only the supplied sequence. When
+    GT and prediction are rendered in separate calls, each therefore gets an
+    independent camera path. Camera orientation stays fixed; only its target
+    and distance change.
+    """
+    if vertices.ndim != 3 or vertices.shape[-1] != 3:
+        raise ValueError(f"Expected vertices shaped (frames, vertices, 3), got {vertices.shape}")
+    if not 0.0 <= frame_padding < 0.5:
+        raise ValueError("frame_padding must be in [0, 0.5).")
+    if not 0.0 < smoothing <= 1.0:
+        raise ValueError("smoothing must be in (0, 1].")
+
+    base_camera_pose = np.asarray(base_camera_pose, dtype=np.float32)
+    rotation = base_camera_pose[:3, :3]
+
+    # Express vertices in the fixed camera-axis basis. Centering in this
+    # basis keeps the projected bounding box centered even with camera pitch.
+    camera_axes_vertices = np.einsum("tvi,ij->tvj", vertices, rotation)
+    raw_centers = 0.5 * (
+        camera_axes_vertices.min(axis=1) + camera_axes_vertices.max(axis=1)
+    )
+    centers = _smooth_camera_signal(raw_centers, smoothing)
+
+    aspect = float(width) / float(height)
+    tan_half_y = float(np.tan(yfov / 2.0))
+    tan_half_x = tan_half_y * aspect
+    usable_frame = 1.0 - frame_padding
+
+    required_distances = np.empty(vertices.shape[0], dtype=np.float32)
+    for frame_index in range(vertices.shape[0]):
+        relative = camera_axes_vertices[frame_index] - centers[frame_index]
+        # With pyrender's OpenGL camera, visible points have camera-space
+        # z < 0. For camera distance d, depth is d - relative_z. Solving the
+        # perspective bounds for d guarantees every mesh vertex remains in
+        # the padded part of the frame.
+        fit_x = relative[:, 2] + np.abs(relative[:, 0]) / (
+            tan_half_x * usable_frame
+        )
+        fit_y = relative[:, 2] + np.abs(relative[:, 1]) / (
+            tan_half_y * usable_frame
+        )
+        required_distances[frame_index] = max(
+            0.25,
+            float(fit_x.max()),
+            float(fit_y.max()),
+            float(relative[:, 2].max()) + 0.05,
+        )
+
+    smooth_distances = _smooth_camera_signal(
+        required_distances[:, None], smoothing
+    )[:, 0]
+    # Smoothing may undershoot during a quick hand/foot extension. Enforce the
+    # exact per-frame fit after smoothing so tracking never introduces crops.
+    distances = np.maximum(smooth_distances, required_distances)
+
+    poses = np.repeat(base_camera_pose[None, :, :], vertices.shape[0], axis=0)
+    camera_centers = centers.copy()
+    camera_centers[:, 2] += distances
+    poses[:, :3, 3] = camera_centers @ rotation.T
+    return poses
+
+
 def render_smplx_debug_video(
     smplx_model,
     poses: np.ndarray,
@@ -465,6 +554,9 @@ def render_smplx_debug_video(
     mesh_color: tuple[int, int, int, int] = (36, 73, 156, 255),
     camera_pose: Optional[np.ndarray] = None,
     only_face: bool = False,
+    track_subject: bool = False,
+    tracking_padding: float = 0.12,
+    tracking_smoothing: float = 0.18,
 ) -> str:
     """Render an SMPL-X mesh sequence to an mp4.
 
@@ -475,6 +567,9 @@ def render_smplx_debug_video(
         `visualize_smpl(only_face=True)` (translation (0, 0.285, 0.25),
         no pitch).
       * `camera_pose=<4x4 ndarray>`: caller-supplied pose, overrides both.
+      * `track_subject=True`: independently center and fit this mesh sequence
+        with a smooth per-frame camera path. The camera orientation remains
+        fixed. This is incompatible with the intentionally cropped face view.
     """
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
@@ -501,7 +596,8 @@ def render_smplx_debug_video(
     floor_mesh = create_checkerboard_floor(y=floor_y, length=12.0, tile_size=1.0)
     scene.add(pyrender.Mesh.from_trimesh(floor_mesh, smooth=False))
 
-    camera = pyrender.PerspectiveCamera(yfov=np.pi / 3.0, aspectRatio=float(width) / float(height))
+    yfov = np.pi / 3.0
+    camera = pyrender.PerspectiveCamera(yfov=yfov, aspectRatio=float(width) / float(height))
     if camera_pose is None:
         if only_face:
             # Tight head framing -- matches old visualize_smpl(only_face=True):
@@ -534,7 +630,21 @@ def render_smplx_debug_video(
             )
     else:
         camera_pose = np.asarray(camera_pose, dtype=np.float32)
-    scene.add(camera, pose=camera_pose)
+    if track_subject and only_face:
+        raise ValueError("track_subject cannot be combined with only_face=True.")
+    camera_poses = None
+    if track_subject:
+        camera_poses = _tracking_camera_poses(
+            vertices=vertices,
+            base_camera_pose=camera_pose,
+            width=width,
+            height=height,
+            yfov=yfov,
+            frame_padding=tracking_padding,
+            smoothing=tracking_smoothing,
+        )
+        camera_pose = camera_poses[0]
+    camera_node = scene.add(camera, pose=camera_pose)
 
     key_light = pyrender.DirectionalLight(color=np.ones(3), intensity=3.0)
     fill_light = pyrender.DirectionalLight(color=np.ones(3), intensity=1.5)
@@ -550,6 +660,8 @@ def render_smplx_debug_video(
 
     try:
         for fidx in range(vertices.shape[0]):
+            if camera_poses is not None:
+                scene.set_pose(camera_node, pose=camera_poses[fidx])
             mesh = trimesh.Trimesh(vertices=vertices[fidx], faces=faces, process=False)
             mesh.visual.vertex_colors = np.tile(
                 np.asarray(mesh_color, dtype=np.uint8),
