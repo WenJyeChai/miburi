@@ -147,6 +147,23 @@ def create_checkerboard_floor(
     )
 
 
+def create_emissive_white_floor_render_mesh(pyrender, floor_mesh):
+    """Convert a floor mesh to an unshaded-looking, pure-white render mesh."""
+    white_material = pyrender.MetallicRoughnessMaterial(
+        # Keep the lit component black and produce the visible white solely
+        # through emission, so directional-light shading cannot turn it gray.
+        baseColorFactor=np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+        emissiveFactor=np.ones(3, dtype=np.float32),
+        metallicFactor=0.0,
+        roughnessFactor=1.0,
+    )
+    return pyrender.Mesh.from_trimesh(
+        floor_mesh,
+        material=white_material,
+        smooth=False,
+    )
+
+
 def mux_audio_into_video(
     video_path: str,
     audio_path: str,
@@ -602,7 +619,7 @@ def render_smplx_debug_video(
         color_a=PURE_WHITE_RGBA,
         color_b=PURE_WHITE_RGBA,
     )
-    scene.add(pyrender.Mesh.from_trimesh(floor_mesh, smooth=False))
+    scene.add(create_emissive_white_floor_render_mesh(pyrender, floor_mesh))
 
     yfov = np.pi / 3.0
     camera = pyrender.PerspectiveCamera(yfov=yfov, aspectRatio=float(width) / float(height))
@@ -750,7 +767,7 @@ def render_smplx_side_by_side_video(
         color_a=PURE_WHITE_RGBA,
         color_b=PURE_WHITE_RGBA,
     )
-    scene.add(pyrender.Mesh.from_trimesh(floor_mesh, smooth=False))
+    scene.add(create_emissive_white_floor_render_mesh(pyrender, floor_mesh))
 
     camera = pyrender.PerspectiveCamera(yfov=np.pi / 3.0, aspectRatio=float(width) / float(height))
     cam_pitch_deg = -8.0
