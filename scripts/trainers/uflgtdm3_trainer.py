@@ -2276,8 +2276,8 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                             stitched_path = os.path.join(tmpdir, "stitched.mp4")
                             audio_path = os.path.join(tmpdir, "audio.wav")
 
-                            # GT in red, Pred in blue (mirrors render_smplx_
-                            # side_by_side_video's default palette).
+                            # Render both GT and prediction with the shared
+                            # default white SMPL-X material.
                             render_smplx_debug_video(
                                 smplx_model=self.smplx_model,
                                 poses=tar_pose_b.reshape(num_frames, -1),
@@ -2286,7 +2286,6 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                                 betas=tar_beta_b,
                                 output_path=gt_path,
                                 fps=self.args.motion_fps,
-                                mesh_color=(180, 54, 54, 255),
                                 track_subject=True,
                             )
                             render_smplx_debug_video(
@@ -2297,7 +2296,6 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                                 betas=tar_beta_b,
                                 output_path=pred_path,
                                 fps=self.args.motion_fps,
-                                mesh_color=(36, 73, 156, 255),
                                 track_subject=True,
                             )
                             stitch_videos_hstack([gt_path, pred_path], stitched_path)

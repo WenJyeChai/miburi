@@ -570,7 +570,7 @@ def render_smplx_debug_video(
     width: int = 640,
     height: int = 480,
     audio_path: Optional[str] = None,
-    mesh_color: tuple[int, int, int, int] = (36, 73, 156, 255),
+    mesh_color: tuple[int, int, int, int] = PURE_WHITE_RGBA,
     camera_pose: Optional[np.ndarray] = None,
     only_face: bool = False,
     track_subject: bool = False,
@@ -722,8 +722,8 @@ def render_smplx_side_by_side_video(
     width: int = 1280,
     height: int = 480,
     audio_path: Optional[str] = None,
-    gt_color: tuple[int, int, int, int] = (36, 73, 156, 255),
-    pred_color: tuple[int, int, int, int] = (180, 54, 54, 255),
+    gt_color: tuple[int, int, int, int] = PURE_WHITE_RGBA,
+    pred_color: tuple[int, int, int, int] = PURE_WHITE_RGBA,
     horizontal_gap: float = 1.2,
 ) -> str:
     """Render GT (left) and reconstruction (right) in one side-by-side video."""
@@ -841,7 +841,7 @@ def render_chunk_smplx_joints_side_by_side(
     audio_path: Optional[str] = None,
     audio_start_sec: float = 0.0,
     audio_duration_sec: Optional[float] = None,
-    mesh_color: tuple[int, int, int, int] = (36, 73, 156, 255),
+    mesh_color: tuple[int, int, int, int] = PURE_WHITE_RGBA,
     joint_indices: Optional[list[int]] = None,
 ) -> str:
     """Render a SMPLX mesh panel and a 2D joint trajectory panel side-by-side.
