@@ -17,7 +17,7 @@ from .data_tools import (
 LOG = logging.getLogger(__name__)
 
 PURE_WHITE_RGBA = (255, 255, 255, 255)
-DEFAULT_SMPLX_RGBA = (200, 200, 200, 255)
+DEFAULT_SMPLX_RGBA = (170, 170, 170, 255)
 
 
 def _render_selected_joint_indices(body_part: str) -> list[int]:
