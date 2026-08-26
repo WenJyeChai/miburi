@@ -2277,7 +2277,7 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
                             audio_path = os.path.join(tmpdir, "audio.wav")
 
                             # Render both GT and prediction with the shared
-                            # default white SMPL-X material.
+                            # default neutral-gray SMPL-X material.
                             render_smplx_debug_video(
                                 smplx_model=self.smplx_model,
                                 poses=tar_pose_b.reshape(num_frames, -1),

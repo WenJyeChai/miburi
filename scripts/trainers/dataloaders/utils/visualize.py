@@ -17,6 +17,7 @@ from .data_tools import (
 LOG = logging.getLogger(__name__)
 
 PURE_WHITE_RGBA = (255, 255, 255, 255)
+DEFAULT_SMPLX_RGBA = (200, 200, 200, 255)
 
 
 def _render_selected_joint_indices(body_part: str) -> list[int]:
@@ -570,7 +571,7 @@ def render_smplx_debug_video(
     width: int = 640,
     height: int = 480,
     audio_path: Optional[str] = None,
-    mesh_color: tuple[int, int, int, int] = PURE_WHITE_RGBA,
+    mesh_color: tuple[int, int, int, int] = DEFAULT_SMPLX_RGBA,
     camera_pose: Optional[np.ndarray] = None,
     only_face: bool = False,
     track_subject: bool = False,
@@ -722,8 +723,8 @@ def render_smplx_side_by_side_video(
     width: int = 1280,
     height: int = 480,
     audio_path: Optional[str] = None,
-    gt_color: tuple[int, int, int, int] = PURE_WHITE_RGBA,
-    pred_color: tuple[int, int, int, int] = PURE_WHITE_RGBA,
+    gt_color: tuple[int, int, int, int] = DEFAULT_SMPLX_RGBA,
+    pred_color: tuple[int, int, int, int] = DEFAULT_SMPLX_RGBA,
     horizontal_gap: float = 1.2,
 ) -> str:
     """Render GT (left) and reconstruction (right) in one side-by-side video."""
@@ -841,7 +842,7 @@ def render_chunk_smplx_joints_side_by_side(
     audio_path: Optional[str] = None,
     audio_start_sec: float = 0.0,
     audio_duration_sec: Optional[float] = None,
-    mesh_color: tuple[int, int, int, int] = PURE_WHITE_RGBA,
+    mesh_color: tuple[int, int, int, int] = DEFAULT_SMPLX_RGBA,
     joint_indices: Optional[list[int]] = None,
 ) -> str:
     """Render a SMPLX mesh panel and a 2D joint trajectory panel side-by-side.
