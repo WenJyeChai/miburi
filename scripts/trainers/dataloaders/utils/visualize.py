@@ -16,6 +16,8 @@ from .data_tools import (
 
 LOG = logging.getLogger(__name__)
 
+PURE_WHITE_RGBA = (255, 255, 255, 255)
+
 
 def _render_selected_joint_indices(body_part: str) -> list[int]:
     bp = str(body_part or "all").strip().lower()
@@ -588,12 +590,18 @@ def render_smplx_debug_video(
     faces = smplx_model.faces
 
     scene = pyrender.Scene(
-        bg_color=np.array([0.75, 0.75, 0.75, 1.0]),
+        bg_color=np.array(PURE_WHITE_RGBA, dtype=np.float32) / 255.0,
         ambient_light=np.array([0.35, 0.35, 0.35]),
     )
 
     floor_y = float(vertices[..., 1].min()) - 0.02
-    floor_mesh = create_checkerboard_floor(y=floor_y, length=12.0, tile_size=1.0)
+    floor_mesh = create_checkerboard_floor(
+        y=floor_y,
+        length=12.0,
+        tile_size=1.0,
+        color_a=PURE_WHITE_RGBA,
+        color_b=PURE_WHITE_RGBA,
+    )
     scene.add(pyrender.Mesh.from_trimesh(floor_mesh, smooth=False))
 
     yfov = np.pi / 3.0
@@ -730,12 +738,18 @@ def render_smplx_side_by_side_video(
     faces = smplx_model.faces
 
     scene = pyrender.Scene(
-        bg_color=np.array([0.75, 0.75, 0.75, 1.0]),
+        bg_color=np.array(PURE_WHITE_RGBA, dtype=np.float32) / 255.0,
         ambient_light=np.array([0.35, 0.35, 0.35]),
     )
 
     floor_y = float(min(gt_vertices[..., 1].min(), pred_vertices[..., 1].min())) - 0.02
-    floor_mesh = create_checkerboard_floor(y=floor_y, length=12.0, tile_size=1.0)
+    floor_mesh = create_checkerboard_floor(
+        y=floor_y,
+        length=12.0,
+        tile_size=1.0,
+        color_a=PURE_WHITE_RGBA,
+        color_b=PURE_WHITE_RGBA,
+    )
     scene.add(pyrender.Mesh.from_trimesh(floor_mesh, smooth=False))
 
     camera = pyrender.PerspectiveCamera(yfov=np.pi / 3.0, aspectRatio=float(width) / float(height))
