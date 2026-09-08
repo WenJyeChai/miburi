@@ -46,6 +46,14 @@ _TRAINER_IMPORTS = (
         "UpperFaceLowerGTDM3SharedRegretRVQTrainer",
     ),
     (
+        ".uflgtdm3_condition_c_trainer",
+        "UpperFaceLowerGTDM3ConditionCRegretRVQTrainer",
+    ),
+    (
+        ".uflgtdm3_condition_c_trainer",
+        "UpperFaceLowerGTDM3ConditionCTeacherRVQTrainer",
+    ),
+    (
         ".uflgtdm3_linguistic_regret_rvq_trainer",
         "UpperFaceLowerGTDM3WordRegretRVQTrainer",
     ),

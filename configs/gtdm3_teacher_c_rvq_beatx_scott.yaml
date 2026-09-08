@@ -1,0 +1,101 @@
+# Directly supervised teacher under the same condition-C speech mask:
+# rolling past speech + all future speech in the supplied clip.
+# Causal gesture history; a single gradient-enabled temporal/depth forward.
+# Same RVQ objective and auxiliaries as ForeMotion; no student, KL, or EMA.
+project_name: gtdm3_teacher_c_rvq_scott_bf16
+trainer: UpperFaceLowerGTDM3ConditionCTeacherRVQ
+
+is_train: True
+ddp: False
+
+beatx_data_path: datasets/beat_english_v2.0.0/
+embody3d_path: datasets/embody_3d_aiagent/
+deps_path: assets_dep/
+
+cache_path: datasets/data_cache/embody3d_dyadic/database.hdf5
+beatx_cache_path: datasets/data_cache/beatx_gtdm3/database.hdf5
+embody3d_cache_path: datasets/data_cache/embody3d_dyadic/database.hdf5
+
+lowerbodycodec_ckpt: experiments/demoexp_release_lowercodec/last_440.safetensors
+upperbodycodec_ckpt: experiments/demoexp_release_uppercodec/last_180.safetensors
+facecodec_ckpt: experiments/demoexp_release_facecodec/last_100.safetensors
+
+is_continue: False
+out_path: ./experiments/
+dataset: unified
+pose_norm: False
+body_part: full
+
+motion_fps: 25
+lowertrans_nfeats: 61
+upperlower_nfeats: 258
+face_nfeats: 106
+
+random_seed: 2342
+pose_length: 250
+frame_chunk_size: 2
+audio_sr: 24000
+audio_fps: 24000
+
+gestureformer_layers: 4
+gestureformer_heads: 2
+gestureformer_depformer_layers: 2
+gestureformer_depformer_heads: 1
+
+transformer_layers: 8
+convblock_layers: 2
+transformer_heads: 4
+num_temp_classifiers: 1
+param_dtype: "bfloat16"
+optim_dtype: "float32"
+
+batch_size: 64
+lr_base: 1e-4
+loader_workers: 8
+grad_norm: 1.0
+opt: adamw
+lr_policy: cosine_delay
+lr_cosine_start_epoch: 200
+
+pretrain_warmup_epochs: 0
+inputtoken_noise_prob: 0
+memory_dropout_prob: 0.1
+memory_embnoise_prob: 0
+
+drop_lower_crossattn: True
+lower_bodypart_dropprob: 0.1
+
+gan_loss_weight: 0.0
+contrastive_loss_weight: 0.1
+genrecon_loss_weight: 0.0
+vad_guidance: True
+vad_use_face_logits: True
+vad_loss_weight: 0.05
+
+face_loss_weight: 2.5
+dataset_ratio: scott_beatx_lowervalid
+textaudio_emb_freeze: False
+varying_frame_length: False
+align_first_frame_yaw: True
+
+# No future gesture privilege in either condition-C experiment.
+dense_future_gesture_weight: 0.0
+
+# Identical stochastic RVQ strategy in both runs. q0 stays canonical hard CE.
+kinematic_rvq_topk: 8
+kinematic_rvq_temperature: 0.5
+kinematic_rvq_sample_probability: 0.15
+kinematic_rvq_soft_target_weight: 0.5
+kinematic_rvq_start_epoch: 0
+kinematic_rvq_ramp_epochs: 1
+kinematic_rvq_distance_chunk_size: 4096
+
+epochs: 10000
+decay_epochs: 2000
+test_period: 20
+decay_rate: 0.8
+log_period: 10
+
+# The teacher-only trainer intentionally has no regret objective.
+regret_weight: 0.0
+regret_initial_weight: 0.0

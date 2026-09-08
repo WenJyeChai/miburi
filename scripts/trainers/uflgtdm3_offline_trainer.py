@@ -21,6 +21,8 @@ from .uflgtdm3_trainer import UpperFaceLowerGTDM3Trainer
 class UpperFaceLowerGTDM3OfflineTrainer(UpperFaceLowerGTDM3Trainer):
     """Original one-q0/19-depth architecture with full temporal memory."""
 
+    model_class = GTemporalDepthModel3Offline
+
     def get_model(self, args):
         checkpoint_info = loaders.CheckpointInfo.from_hf_repo(
             loaders.DEFAULT_REPO
@@ -57,7 +59,7 @@ class UpperFaceLowerGTDM3OfflineTrainer(UpperFaceLowerGTDM3Trainer):
             codec_layer.requires_grad_(False)
         gesture_codec_layers.eval()
 
-        return GTemporalDepthModel3Offline(
+        return self.model_class(
             num_heads=args.gestureformer_heads,
             num_layers=args.gestureformer_layers,
             depformer_heads=args.gestureformer_depformer_heads,

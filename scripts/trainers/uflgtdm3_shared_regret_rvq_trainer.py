@@ -36,10 +36,13 @@ from .uflgtdm3_shared_regret_trainer import UpperFaceLowerGTDM3SharedRegretTrain
 from .utils import tools as other_tools
 
 
-class UpperFaceLowerGTDM3SharedRegretRVQTrainer(
-    UpperFaceLowerGTDM3SharedRegretTrainer
-):
-    """GlobalRegret self-distillation plus stochastic-RVQ depth training."""
+class StochasticRVQTrainingMixin:
+    """Shared RVQ objective for causal-student and supervised-teacher runs.
+
+    This mixin adds stochastic depth prefixes and hard/soft depth CE to a
+    GTDM3 trainer without choosing a speech mask or adding a regret loss.
+    Temporal inputs and q0 targets remain canonical; both paths train.
+    """
 
     _RVQ_METRICS = (
         ("kinematic_hard_ce", False),
@@ -350,19 +353,6 @@ class UpperFaceLowerGTDM3SharedRegretRVQTrainer(
         )
         return ce_loss, upper_loss, lower_loss, face_loss
 
-    def _teacher_depth_input_codes(self, split, input_codes):
-        """Feed the teacher's depth branch the same stochastic prefix.
-
-        Only the training split ever uses a stochastic prefix (validation
-        stays on the released deterministic path, matching
-        ``UpperFaceLowerGTDM3FrozenTemporalRVQTrainer``), so this falls back
-        to the canonical ``input_codes`` for ``split == "val"``.
-        """
-
-        if split == "train" and self._last_train_depth_input_codes is not None:
-            return self._last_train_depth_input_codes
-        return input_codes
-
     def record_validation_diagnostics(
         self,
         logits,
@@ -370,7 +360,7 @@ class UpperFaceLowerGTDM3SharedRegretRVQTrainer(
         pad_loss_mask,
         **batch_context,
     ):
-        """Regret + released q0 diagnostics, plus deterministic depth CE."""
+        """Retain the underlying trainer diagnostics and log depth CE."""
 
         super().record_validation_diagnostics(
             logits, gesture_tokens, pad_loss_mask, **batch_context,
@@ -410,3 +400,16 @@ class UpperFaceLowerGTDM3SharedRegretRVQTrainer(
             self.tracker.update_meter(
                 f"kinematic_{part}_hard_ce", "val", value.item(),
             )
+
+
+class UpperFaceLowerGTDM3SharedRegretRVQTrainer(
+    StochasticRVQTrainingMixin, UpperFaceLowerGTDM3SharedRegretTrainer
+):
+    """GlobalRegret self-distillation plus stochastic-RVQ depth training."""
+
+    def _teacher_depth_input_codes(self, split, input_codes):
+        """Match student/teacher stochastic prefixes; validate canonically."""
+
+        if split == "train" and self._last_train_depth_input_codes is not None:
+            return self._last_train_depth_input_codes
+        return input_codes

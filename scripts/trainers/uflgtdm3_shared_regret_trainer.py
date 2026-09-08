@@ -63,6 +63,8 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
     feeding it the teacher's temporal hidden state instead of the student's.
     """
 
+    _REGRET_VIEW_NAME = "GlobalRegret"
+
     _REGRET_METRICS = (
         ("regret_loss", False),
         ("regret_weighted", False),
@@ -183,7 +185,7 @@ class UpperFaceLowerGTDM3SharedRegretTrainer(UpperFaceLowerGTDM3Trainer):
 
         logger.info(
             f"[GPU{self.global_rank}:{self.local_rank}] Shared-weight "
-            f"GlobalRegret setup: depth_levels="
+            f"{self._REGRET_VIEW_NAME} setup: depth_levels="
             f"{self.regret_include_depth_levels}; "
             f"start_epoch={self.regret_start_epoch}; "
             f"alpha={self.args.regret_initial_weight}->"

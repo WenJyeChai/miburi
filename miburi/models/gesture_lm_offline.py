@@ -79,6 +79,7 @@ class StaticMemoryCrossAttention(StreamingMultiheadCrossAttention):
         value: torch.Tensor,
         query_padding_mask: torch.Tensor | None = None,
         key_padding_mask: torch.Tensor | None = None,
+        extra_attn_bias: torch.Tensor | None = None,
     ):
         state = self._streaming_state
         if state is None:
@@ -88,6 +89,7 @@ class StaticMemoryCrossAttention(StreamingMultiheadCrossAttention):
                 value,
                 query_padding_mask=query_padding_mask,
                 key_padding_mask=key_padding_mask,
+                extra_attn_bias=extra_attn_bias,
             )
 
         if self.causal:
@@ -204,6 +206,13 @@ class StaticMemoryCrossAttention(StreamingMultiheadCrossAttention):
                 else attention_mask & valid_keys
             )
 
+        if extra_attn_bias is not None:
+            attention_mask = (
+                extra_attn_bias
+                if attention_mask is None
+                else attention_mask & extra_attn_bias
+            )
+
         output = F.scaled_dot_product_attention(
             q,
             k,
@@ -230,11 +239,12 @@ class StaticMemoryCrossAttention(StreamingMultiheadCrossAttention):
 
 def _as_static_memory_attention(
     source: StreamingMultiheadCrossAttention,
+    attention_class: type[StaticMemoryCrossAttention] = StaticMemoryCrossAttention,
 ) -> StaticMemoryCrossAttention:
     """Create a state-dict-compatible static-memory attention module."""
 
     parameter = next(source.parameters())
-    replacement = StaticMemoryCrossAttention(
+    replacement = attention_class(
         embed_dim=source.embed_dim,
         num_heads=source.num_heads,
         causal=False,
@@ -255,6 +265,8 @@ def _as_static_memory_attention(
 class GTemporalDepthModel3Offline(GTemporalDepthModel3):
     """Original MIBURI architecture with offline temporal conditioning."""
 
+    temporal_attention_class = StaticMemoryCrossAttention
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if not self.causal:
@@ -266,7 +278,9 @@ class GTemporalDepthModel3Offline(GTemporalDepthModel3):
         for layer in self.temporal_transformer.layers:
             layer.cross_attns = torch.nn.ModuleList(
                 [
-                    _as_static_memory_attention(attention)
+                    _as_static_memory_attention(
+                        attention, self.temporal_attention_class,
+                    )
                     for attention in layer.cross_attns
                 ]
             )

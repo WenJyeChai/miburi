@@ -19,6 +19,10 @@ from .gesture_lm_offline import (
     GestureLMOfflineGen,
     GTemporalDepthModel3Offline,
 )
+from .gesture_lm_condition_c import (
+    GTemporalDepthModel3ConditionC,
+    forward_condition_c_teacher_view,
+)
 from .gesture_lm_future_gesture import (
     GTemporalDepthModel3FutureGesture,
     GTemporalDepthModel3FutureGestureFullCondition,

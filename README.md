@@ -444,6 +444,15 @@ covers the composition-specific piece: that `depth_input_codes` only changes
 the teacher's depth branch (never the temporal branch), and that a mismatched
 shape is rejected.
 
+##### Condition C: future-only speech privilege
+
+The [condition-C experiment guide](docs/condition_c_experiments.md) provides
+matched training commands for ForeMotion with a detached shared-weight teacher
+and a directly supervised teacher-only model. Both teacher views retain the
+student's rolling past-speech boundary and add all future speech in the supplied
+clip, while gesture self-attention stays causal. The guide also explains how to
+evaluate a shared ForeMotion checkpoint using the condition-C teacher view.
+
 ##### + dense future-gesture regret (the paper's actual Eq. 17 mechanism, optional, off by default)
 
 Both `UpperFaceLowerGTDM3SharedRegretTrainer` and its RVQ subclass also
