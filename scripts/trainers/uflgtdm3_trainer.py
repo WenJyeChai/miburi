@@ -142,7 +142,11 @@ class UpperFaceLowerGTDM3Trainer(BaseGLMTrainer):
 
         # breakpoint()
         mimi_frame_rate = loaders.FRAME_RATE
-        gesture_lm_kwargs = loaders.get_gesturelm_kwargs()
+        # Copy the loader defaults so this run cannot change other models.
+        gesture_lm_kwargs = dict(loaders.get_gesturelm_kwargs())
+        gesture_lm_kwargs["depformer_weights_per_step"] = getattr(
+            args, "gestureformer_depformer_weights_per_step", True
+        )
         # mimi_cardinality = loaders._quantizer_kwargs["bins"]
         # breakpoint()
         # text_tokenizer = checkpoint_info.get_text_tokenizer()

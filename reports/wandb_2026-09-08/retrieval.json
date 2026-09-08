@@ -1,0 +1,1 @@
+{"retrieved_at_utc": "2026-09-08T11:01:55.719346+00:00", "run_ids": ["8hir7gzc", "0st12z6a"], "history_sampling": "Every logged step in disjoint ranges of at most 500 steps, requesting 500 rows per range."}

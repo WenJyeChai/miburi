@@ -372,7 +372,10 @@ def test_temporal_streaming_matches_complete_sequence_beyond_past_window():
 
 
 def test_generator_reuses_full_memory_and_matches_greedy_q0_with_cfg():
-    for scale, cfg, per_step_weights in ((1, 1.0, True), (1, 2.0, True), (2, 2.0, False)):
+    for scale, cfg, per_step_weights in (
+        (1, 1.0, True), (1, 2.0, True),
+        (1, 1.0, False), (1, 2.0, False), (2, 2.0, False),
+    ):
         torch.manual_seed(34 + scale)
         kwargs = _kwargs(scale)
         # The released depth path's per-step K/V schedule assumes scale=1.
@@ -406,6 +409,12 @@ def test_generator_reuses_full_memory_and_matches_greedy_q0_with_cfg():
         torch.testing.assert_close(
             logits[:, :1, :, :model.card].argmax(dim=-1), generated[:, :1],
         )
+        if not per_step_weights and scale == 1:
+            # Shared projections also permit a full-depth parity check at
+            # the actual C experiment's one-to-one speech/gesture rate.
+            torch.testing.assert_close(
+                logits[..., :model.card].argmax(dim=-1), generated,
+            )
         assert generated.shape == (1, 20, 5)
         assert bool(((generated >= 0) & (generated < model.card)).all())
 

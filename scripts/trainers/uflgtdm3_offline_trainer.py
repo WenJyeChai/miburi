@@ -39,7 +39,11 @@ class UpperFaceLowerGTDM3OfflineTrainer(UpperFaceLowerGTDM3Trainer):
             "text/audio embedding processors loaded for offline MIBURI"
         )
 
-        gesture_lm_kwargs = loaders.get_gesturelm_kwargs()
+        # Keep the same opt-in depth sharing as the causal student factory.
+        gesture_lm_kwargs = dict(loaders.get_gesturelm_kwargs())
+        gesture_lm_kwargs["depformer_weights_per_step"] = getattr(
+            args, "gestureformer_depformer_weights_per_step", True
+        )
         upper_layers = copy.deepcopy(
             self.upper_gesture_codec.quantizer.vq.layers
         )

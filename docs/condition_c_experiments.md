@@ -90,6 +90,111 @@ The ForeMotion KL weight is 0.6 at epoch 0 and reaches 6 at epoch 1. Both runs
 ramp RVQ augmentation over the first epoch. Teacher-only regret weights are
 explicitly zero because that trainer has no regret objective.
 
+## Shared depth weights ablation
+
+The shared-depth variants change only `gestureformer_depformer_weights_per_step`
+to `False` and use distinct output project names:
+
+- `configs/gtdm3_foremotion_c_shareddepth_rvq_beatx_scott.yaml`
+- `configs/gtdm3_teacher_c_shareddepth_rvq_beatx_scott.yaml`
+
+Each of the two depth layers now reuses one set of self-attention,
+audio/text cross-attention, feedforward and gating weights across all 19
+codebook steps. The two layers still have different weights. All 19
+codebook-specific gesture embeddings, gesture projections, temporal-state input
+projections, speaker embeddings and output heads remain separate. The 20
+codebooks, generation order, causal masks, C speech privilege and objectives
+are retained. The existing configurations default to separate weights.
+
+For the configured model dimensions, the depth Transformer core decreases from
+69,374,464 to 3,904,000 parameters; the temporal core remains 7,808,000. These
+counts exclude the separate embeddings, projections and prediction heads.
+This ablation keeps the previous learning-rate schedule, including cosine
+decay starting at epoch 200 and ending at epoch 10,000. Test earlier decay in
+a separate run to avoid combining two explanations for any improvement.
+
+Start these experiments from scratch (`is_continue: False`). The previous
+19-set checkpoints have a different parameter layout and cannot be resumed
+with shared depth weights. For later inference or resuming a shared-depth run,
+use its shared-depth configuration. To evaluate the shared ForeMotion checkpoint
+through the C teacher view, select the shared-depth teacher configuration.
+
+ForeMotion C with shared depth weights:
+
+```bash
+CUDA_VISIBLE_DEVICES=2 \
+WANDB_INIT_TIMEOUT=600 \
+OMP_NUM_THREADS=4 \
+python scripts/train.py \
+  --config configs/gtdm3_foremotion_c_shareddepth_rvq_beatx_scott.yaml \
+  --gestureformer_depformer_weights_per_step False \
+  --batch_size 64 \
+  --loader_workers 8 \
+  --pretrain_warmup_epochs 0 \
+  --regret_start_epoch 0 \
+  --regret_ramp_epochs 1 \
+  --regret_weight 6 \
+  --regret_initial_weight 0.6 \
+  --kinematic_rvq_start_epoch 0 \
+  --kinematic_rvq_ramp_epochs 1 \
+  --dense_future_gesture_weight 0 \
+  --test_period 20 \
+  --lr_policy cosine_delay \
+  --lr_cosine_start_epoch 200 \
+  --wandb True \
+  --wandb_project miburi_single \
+  --wandb_group future-only-c-shareddepth-scott \
+  --wandb_name foremotion-c-shareddepth-rvq-scott-bs64 \
+  --wandb_tags foremotion condition-c future-only shared-teacher shared-depth scott rvq bs64
+```
+
+Directly supervised teacher C with shared depth weights:
+
+```bash
+CUDA_VISIBLE_DEVICES=2 \
+WANDB_INIT_TIMEOUT=600 \
+OMP_NUM_THREADS=4 \
+python scripts/train.py \
+  --config configs/gtdm3_teacher_c_shareddepth_rvq_beatx_scott.yaml \
+  --gestureformer_depformer_weights_per_step False \
+  --batch_size 64 \
+  --loader_workers 8 \
+  --pretrain_warmup_epochs 0 \
+  --regret_weight 0 \
+  --regret_initial_weight 0 \
+  --kinematic_rvq_start_epoch 0 \
+  --kinematic_rvq_ramp_epochs 1 \
+  --dense_future_gesture_weight 0 \
+  --test_period 20 \
+  --lr_policy cosine_delay \
+  --lr_cosine_start_epoch 200 \
+  --wandb True \
+  --wandb_project miburi_single \
+  --wandb_group future-only-c-shareddepth-scott \
+  --wandb_name teacher-c-shareddepth-supervised-rvq-scott-bs64 \
+  --wandb_tags teacher-only condition-c future-only supervised-teacher shared-depth scott rvq bs64
+```
+
+Both commands use GPU 2; run sequentially or select a different GPU for one.
+The boolean switch is also recorded in the W&B configuration. Compare each
+shared-depth run with its corresponding original run at matched epochs and
+at its best validation checkpoint. Validation remains teacher-forced token
+prediction; generated-motion evaluation is a separate measurement.
+
+Additional CPU checks for the sharing ablation:
+
+```bash
+python -m scripts.smoke_test_shared_depth_weights
+python -m scripts.smoke_test_gesture_lm_condition_c
+python -m scripts.smoke_test_condition_c_trainers
+```
+
+Sharing validation: all 6 new sharing checks, 12 C model checks and 8 C
+trainer checks passed on CPU. Both baseline and both shared-depth CLI commands
+passed parsing. The shared scale-1 C generator also matched all 20 batched
+greedy predictions with and without classifier-free guidance. These are small
+synthetic checks; full dataset training and CUDA motion benchmarks were not run.
+
 ## Interpret and evaluate
 
 Training retains `pose_length: 250` at 25 fps: the privileged future is the

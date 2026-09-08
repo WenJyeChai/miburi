@@ -452,6 +452,9 @@ and a directly supervised teacher-only model. Both teacher views retain the
 student's rolling past-speech boundary and add all future speech in the supplied
 clip, while gesture self-attention stays causal. The guide also explains how to
 evaluate a shared ForeMotion checkpoint using the condition-C teacher view.
+It also includes a [shared-depth-weight ablation](docs/condition_c_experiments.md#shared-depth-weights-ablation)
+for both runs, retaining separate codebook embeddings, input projections and
+output heads while sharing each depth layer's attention and feedforward weights.
 
 ##### + dense future-gesture regret (the paper's actual Eq. 17 mechanism, optional, off by default)
 

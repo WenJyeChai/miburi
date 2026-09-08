@@ -1,0 +1,75 @@
+{
+  "matched_epoch": 640,
+  "runs": {
+    "foremotion": {
+      "history_rows": 1351,
+      "latest_training_epoch": 659,
+      "latest_validation_epoch": 640,
+      "best_validation_epoch": 280,
+      "best_validation_ce": 5.864193916320801,
+      "latest_validation_ce": 6.168553829193115,
+      "matched": {
+        "val/ce_loss": 6.168553829193115,
+        "val/ce_upper": 2.5643610060214996,
+        "val/ce_lower": 1.7602992430329323,
+        "val/ce_face": 1.8438938856124878,
+        "val/temporal_q0_ce": 3.859375,
+        "val/temporal_q0_acc": 0.25022220611572266,
+        "val/temporal_q0_top5_acc": 0.5007407069206238,
+        "val/kinematic_hard_ce": 8.75
+      },
+      "median_epoch_seconds_after_100": 5.835287094116211,
+      "median_reserved_gpu_gb_after_100": 37.60193536,
+      "latest_learning_rate": 9.946743397550895e-05,
+      "eval_keys": []
+    },
+    "teacher": {
+      "history_rows": 1699,
+      "latest_training_epoch": 828,
+      "latest_validation_epoch": 820,
+      "best_validation_epoch": 220,
+      "best_validation_ce": 5.962051868438721,
+      "latest_validation_ce": 7.377293586730957,
+      "matched": {
+        "val/ce_loss": 6.977770805358887,
+        "val/ce_upper": 2.7063016295433044,
+        "val/ce_lower": 2.1307952478528023,
+        "val/ce_face": 2.1406736373901367,
+        "val/temporal_q0_ce": 3.890625,
+        "val/temporal_q0_acc": 0.2432592511177063,
+        "val/temporal_q0_top5_acc": 0.49037036299705505,
+        "val/kinematic_hard_ce": 10
+      },
+      "median_epoch_seconds_after_100": 4.588282823562622,
+      "median_reserved_gpu_gb_after_100": 22.215131136,
+      "latest_learning_rate": 9.900345880285544e-05,
+      "eval_keys": []
+    }
+  },
+  "shared_teacher_at_matched_epoch": {
+    "val/regret_weighted": 0.019666636362671852,
+    "val/regret_depth_student_gt_prob": 0.05208040028810501,
+    "val/regret_teacher_advantage": 0.4823703467845917,
+    "val/regret_depth_teacher_entropy": 4.1506266593933105,
+    "val/regret_depth_teacher_advantage": 0.5069473385810852,
+    "val/regret_teacher_q0_ce": 3.851217269897461,
+    "val/regret_depth_teacher_gt_prob": 0.05213424190878868,
+    "val/regret_depth_teacher_ce": 6.2884440422058105,
+    "val/regret_loss": 0.00327777280472219,
+    "val/regret_student_q0_ce": 3.8515217304229736,
+    "val/regret_depth_student_acc": 0.09830798953771591,
+    "val/regret_student_gt_prob": 0.11203985661268234,
+    "val/regret_depth_student_ce": 6.290478706359863,
+    "val/regret_depth_teacher_acc": 0.09833917766809464,
+    "val/regret_depth_student_entropy": 4.151261329650879,
+    "val/regret_teacher_gt_prob": 0.11216646432876587,
+    "val/regret_teacher_q0_acc": 0.24962963163852692,
+    "val/regret_student_q0_acc": 0.25022220611572266,
+    "val/regret_student_entropy": 3.7666399478912354,
+    "val/regret_teacher_entropy": 3.7645652294158936,
+    "val/regret_alpha": 6
+  },
+  "teacher_q0_ce_wins": 4,
+  "teacher_depth_ce_wins": 16,
+  "foremotion_validation_count": 32
+}

@@ -492,6 +492,17 @@ def parse_args():
     parser.add("--gestureformer_heads", default=16, type=int)
     parser.add("--gestureformer_depformer_heads", default=16, type=int)
     parser.add("--gestureformer_depformer_layers", default=8, type=int)
+    parser.add(
+        "--gestureformer_depformer_weights_per_step",
+        default=True,
+        type=str2bool,
+        help=(
+            "GTDM3 base/offline/C depth transformer: True keeps separate "
+            "attention and feedforward weights per codebook step; False "
+            "shares them across steps within each layer. Codebook-specific "
+            "embeddings, input projections and output heads are retained."
+        ),
+    )
     parser.add("--upperlower_nfeats", default=258, type=int)
     parser.add("--lowertrans_nfeats", default=61, type=int)
     parser.add("--face_nfeats", default=106, type=int)
