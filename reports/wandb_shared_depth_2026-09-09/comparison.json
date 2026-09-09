@@ -1,0 +1,774 @@
+{
+  "runs": {
+    "0st12z6a": {
+      "name": "foremotion-c-rvq-scott-bs64",
+      "state": "finished",
+      "latest_validation_epoch": 1500,
+      "latest_training_epoch": 1503,
+      "validation_count": 75,
+      "metrics": {
+        "val/ce_loss": {
+          "best_epoch": 280,
+          "best_value": 5.864193916320801,
+          "tied_best_epochs": [
+            280
+          ],
+          "latest_value": 6.619848728179932,
+          "change_from_best_percent": 12.885911050042997
+        },
+        "val/temporal_q0_ce": {
+          "best_epoch": 1080,
+          "best_value": 3.6875,
+          "tied_best_epochs": [
+            1080,
+            1140
+          ],
+          "latest_value": 3.765625,
+          "change_from_best_percent": 2.1186440677966045
+        },
+        "val/temporal_q0_acc": {
+          "best_epoch": 1140,
+          "best_value": 0.26103702187538147,
+          "tied_best_epochs": [
+            1140
+          ],
+          "latest_value": 0.25244444608688354,
+          "change_from_best_percent": -3.2917077151608076
+        },
+        "derived/depth_mean_ce": {
+          "best_epoch": 240,
+          "best_value": 5.928457360518606,
+          "tied_best_epochs": [
+            240
+          ],
+          "latest_value": 6.770071029663086,
+          "change_from_best_percent": 14.196166354325568
+        },
+        "val/kinematic_hard_ce": {
+          "best_epoch": 180,
+          "best_value": 7.75,
+          "tied_best_epochs": [
+            180,
+            200,
+            220,
+            240,
+            260
+          ],
+          "latest_value": 9.625,
+          "change_from_best_percent": 24.193548387096776
+        },
+        "val/ce_upper": {
+          "best_epoch": 1120,
+          "best_value": 2.5268079191446304,
+          "tied_best_epochs": [
+            1120
+          ],
+          "latest_value": 2.5589599311351776,
+          "change_from_best_percent": 1.2724359357489723
+        },
+        "val/ce_lower": {
+          "best_epoch": 620,
+          "best_value": 1.759629212319851,
+          "tied_best_epochs": [
+            620
+          ],
+          "latest_value": 1.9086579009890556,
+          "change_from_best_percent": 8.46932340210067
+        },
+        "val/ce_face": {
+          "best_epoch": 160,
+          "best_value": 1.3485434651374817,
+          "tied_best_epochs": [
+            160
+          ],
+          "latest_value": 2.1522305607795715,
+          "change_from_best_percent": 59.596677186830995
+        }
+      },
+      "train_depth_hard_ce_at_best_total": 5.808035714285714,
+      "train_depth_hard_ce_at_latest_validation": 2.2924107142857144,
+      "val_depth_hard_ce_at_best_total": 7.84375,
+      "val_depth_hard_ce_at_latest_validation": 9.625,
+      "latest_lr": 9.575056913167912e-05,
+      "parameters": 320812552,
+      "trainable_parameters": 320812552,
+      "train_samples": 477,
+      "val_samples": 54,
+      "eval_keys": [],
+      "nonfinite_metrics": 0,
+      "median_epoch_seconds_after_100": 5.83374810218811,
+      "config": {
+        "gestureformer_depformer_weights_per_step": null,
+        "random_seed": 2342,
+        "batch_size": 64,
+        "weight_decay": 0,
+        "textaudio_emb_freeze": false,
+        "lr_policy": "cosine_delay",
+        "lr_base": 0.0001,
+        "lr_cosine_start_epoch": 200,
+        "lr_cosine_end_epoch": -1,
+        "lr_min": 1e-06,
+        "epochs": 10000,
+        "face_loss_weight": 2.5,
+        "vad_use_face_logits": true
+      },
+      "body_deterioration_from_best_total": {
+        "upper": {
+          "ce_contribution_change": -0.00965176522731781,
+          "fraction_of_net_total_increase": -0.012772717219350006
+        },
+        "lower": {
+          "ce_contribution_change": 0.06580827385187149,
+          "fraction_of_net_total_increase": 0.08708774538200051
+        },
+        "face": {
+          "ce_contribution_change": 0.6994984149932861,
+          "fraction_of_net_total_increase": 0.9256851197338588
+        }
+      },
+      "shared_teacher_latest": {
+        "val/regret_depth_teacher_gt_prob": 0.05407290160655975,
+        "val/regret_depth_student_acc": 0.09184405207633972,
+        "val/regret_teacher_advantage": 0.5074073672294617,
+        "val/regret_depth_teacher_ce": 6.750196933746338,
+        "val/regret_depth_teacher_acc": 0.09254580736160278,
+        "val/regret_student_entropy": 2.896850109100342,
+        "val/regret_teacher_q0_acc": 0.2525925934314728,
+        "val/regret_depth_teacher_entropy": 3.5124423503875732,
+        "val/regret_weighted": 0.08142969012260437,
+        "val/regret_teacher_gt_prob": 0.14958585798740387,
+        "val/regret_teacher_q0_ce": 3.7597177028656006,
+        "val/regret_depth_student_entropy": 3.50986647605896,
+        "val/regret_student_gt_prob": 0.1494757980108261,
+        "val/regret_depth_student_gt_prob": 0.05366140604019165,
+        "val/regret_teacher_entropy": 2.896174907684326,
+        "val/regret_depth_teacher_advantage": 0.5368888974189758,
+        "val/regret_student_q0_ce": 3.7638401985168457,
+        "val/regret_depth_student_ce": 6.770201206207275,
+        "val/regret_alpha": 6,
+        "val/regret_student_q0_acc": 0.25244444608688354,
+        "val/regret_loss": 0.013571614399552345
+      }
+    },
+    "7so4vnve": {
+      "name": "foremotion-c-shareddepth-rvq-scott-bs64",
+      "state": "finished",
+      "latest_validation_epoch": 1060,
+      "latest_training_epoch": 1072,
+      "validation_count": 53,
+      "metrics": {
+        "val/ce_loss": {
+          "best_epoch": 320,
+          "best_value": 6.095552444458008,
+          "tied_best_epochs": [
+            320
+          ],
+          "latest_value": 6.962294101715088,
+          "change_from_best_percent": 14.219246986302437
+        },
+        "val/temporal_q0_ce": {
+          "best_epoch": 800,
+          "best_value": 3.71875,
+          "tied_best_epochs": [
+            800,
+            820,
+            840,
+            860,
+            880,
+            900,
+            920,
+            940,
+            960
+          ],
+          "latest_value": 3.75,
+          "change_from_best_percent": 0.8403361344537785
+        },
+        "val/temporal_q0_acc": {
+          "best_epoch": 840,
+          "best_value": 0.2536296248435974,
+          "tied_best_epochs": [
+            840
+          ],
+          "latest_value": 0.24651850759983063,
+          "change_from_best_percent": -2.8037407886211674
+        },
+        "derived/depth_mean_ce": {
+          "best_epoch": 320,
+          "best_value": 6.1893973099557975,
+          "tied_best_epochs": [
+            320
+          ],
+          "latest_value": 7.131362212331672,
+          "change_from_best_percent": 15.219008494747953
+        },
+        "val/kinematic_hard_ce": {
+          "best_epoch": 240,
+          "best_value": 7.9375,
+          "tied_best_epochs": [
+            240
+          ],
+          "latest_value": 10.375,
+          "change_from_best_percent": 30.708661417322823
+        },
+        "val/ce_upper": {
+          "best_epoch": 740,
+          "best_value": 2.557786747813225,
+          "tied_best_epochs": [
+            740
+          ],
+          "latest_value": 2.6038524955511093,
+          "change_from_best_percent": 1.801000328790825
+        },
+        "val/ce_lower": {
+          "best_epoch": 800,
+          "best_value": 1.8714845553040504,
+          "tied_best_epochs": [
+            800
+          ],
+          "latest_value": 1.9544532150030136,
+          "change_from_best_percent": 4.433307208644521
+        },
+        "val/ce_face": {
+          "best_epoch": 220,
+          "best_value": 1.3703574538230896,
+          "tied_best_epochs": [
+            220
+          ],
+          "latest_value": 2.403989017009735,
+          "change_from_best_percent": 75.42787907658473
+        }
+      },
+      "train_depth_hard_ce_at_best_total": 6.888392857142857,
+      "train_depth_hard_ce_at_latest_validation": 3.7611607142857144,
+      "val_depth_hard_ce_at_best_total": 8.0625,
+      "val_depth_hard_ce_at_latest_validation": 10.375,
+      "latest_lr": 9.808293990566113e-05,
+      "parameters": 255342088,
+      "trainable_parameters": 255342088,
+      "train_samples": 477,
+      "val_samples": 54,
+      "eval_keys": [],
+      "nonfinite_metrics": 0,
+      "median_epoch_seconds_after_100": 4.828861594200134,
+      "config": {
+        "gestureformer_depformer_weights_per_step": false,
+        "random_seed": 2342,
+        "batch_size": 64,
+        "weight_decay": 0,
+        "textaudio_emb_freeze": false,
+        "lr_policy": "cosine_delay",
+        "lr_base": 0.0001,
+        "lr_cosine_start_epoch": 200,
+        "lr_cosine_end_epoch": -1,
+        "lr_min": 1e-06,
+        "epochs": 10000,
+        "face_loss_weight": 2.5,
+        "vad_use_face_logits": true
+      },
+      "body_deterioration_from_best_total": {
+        "upper": {
+          "ce_contribution_change": 0.01271587610244751,
+          "fraction_of_net_total_increase": 0.014670895296170028
+        },
+        "lower": {
+          "ce_contribution_change": -0.11038321256637573,
+          "fraction_of_net_total_increase": -0.12735422561285237
+        },
+        "face": {
+          "ce_contribution_change": 0.9644091129302979,
+          "fraction_of_net_total_increase": 1.1126834678539619
+        }
+      },
+      "shared_teacher_latest": {
+        "val/regret_teacher_q0_ce": 3.7445452213287354,
+        "val/regret_depth_teacher_acc": 0.08371149748563766,
+        "val/regret_depth_student_entropy": 3.9898674488067627,
+        "val/regret_depth_teacher_advantage": 0.5295126438140869,
+        "val/regret_teacher_advantage": 0.4924444258213043,
+        "val/regret_alpha": 6,
+        "val/regret_depth_student_gt_prob": 0.04439198970794678,
+        "val/regret_teacher_gt_prob": 0.14190688729286194,
+        "val/regret_depth_teacher_entropy": 3.989651918411255,
+        "val/regret_weighted": 0.09442701935768127,
+        "val/regret_depth_student_acc": 0.08233918249607086,
+        "val/regret_depth_teacher_ce": 7.119901180267334,
+        "val/regret_student_entropy": 3.052206039428711,
+        "val/regret_depth_student_ce": 7.131663799285889,
+        "val/regret_student_q0_ce": 3.744976043701172,
+        "val/regret_student_q0_acc": 0.24651850759983063,
+        "val/regret_student_gt_prob": 0.14163438975811005,
+        "val/regret_teacher_q0_acc": 0.2459259182214737,
+        "val/regret_teacher_entropy": 3.049149751663208,
+        "val/regret_depth_teacher_gt_prob": 0.04492941126227379,
+        "val/regret_loss": 0.015737837180495262
+      }
+    },
+    "8hir7gzc": {
+      "name": "teacher-c-supervised-rvq-scott-bs64",
+      "state": "finished",
+      "latest_validation_epoch": 1900,
+      "latest_training_epoch": 1913,
+      "validation_count": 95,
+      "metrics": {
+        "val/ce_loss": {
+          "best_epoch": 220,
+          "best_value": 5.962051868438721,
+          "tied_best_epochs": [
+            220
+          ],
+          "latest_value": 10.168251991271973,
+          "change_from_best_percent": 70.54953924670781
+        },
+        "val/temporal_q0_ce": {
+          "best_epoch": 880,
+          "best_value": 3.78125,
+          "tied_best_epochs": [
+            880,
+            900,
+            920,
+            940,
+            960,
+            980
+          ],
+          "latest_value": 4.96875,
+          "change_from_best_percent": 31.404958677685958
+        },
+        "val/temporal_q0_acc": {
+          "best_epoch": 900,
+          "best_value": 0.25155556201934814,
+          "tied_best_epochs": [
+            900
+          ],
+          "latest_value": 0.16103702783584595,
+          "change_from_best_percent": -35.983515314417915
+        },
+        "derived/depth_mean_ce": {
+          "best_epoch": 220,
+          "best_value": 6.017620387830232,
+          "tied_best_epochs": [
+            220
+          ],
+          "latest_value": 10.441909990812603,
+          "change_from_best_percent": 73.5222449712823
+        },
+        "val/kinematic_hard_ce": {
+          "best_epoch": 180,
+          "best_value": 7.78125,
+          "tied_best_epochs": [
+            180
+          ],
+          "latest_value": 14.4375,
+          "change_from_best_percent": 85.54216867469879
+        },
+        "val/ce_upper": {
+          "best_epoch": 280,
+          "best_value": 2.612321302294731,
+          "tied_best_epochs": [
+            280
+          ],
+          "latest_value": 3.536852389574051,
+          "change_from_best_percent": 35.39117054503165
+        },
+        "val/ce_lower": {
+          "best_epoch": 340,
+          "best_value": 1.8628036603331566,
+          "tied_best_epochs": [
+            340
+          ],
+          "latest_value": 3.6432686001062393,
+          "change_from_best_percent": 95.57984975478587
+        },
+        "val/ce_face": {
+          "best_epoch": 140,
+          "best_value": 1.3508128821849823,
+          "tied_best_epochs": [
+            140
+          ],
+          "latest_value": 2.988130509853363,
+          "change_from_best_percent": 121.20980257605835
+        }
+      },
+      "train_depth_hard_ce_at_best_total": 6.379464285714286,
+      "train_depth_hard_ce_at_latest_validation": 1.8616071428571428,
+      "val_depth_hard_ce_at_best_total": 7.8125,
+      "val_depth_hard_ce_at_latest_validation": 14.4375,
+      "latest_lr": 9.273054202525034e-05,
+      "parameters": 320812552,
+      "trainable_parameters": 320812552,
+      "train_samples": 477,
+      "val_samples": 54,
+      "eval_keys": [],
+      "nonfinite_metrics": 0,
+      "median_epoch_seconds_after_100": 4.586844563484192,
+      "config": {
+        "gestureformer_depformer_weights_per_step": null,
+        "random_seed": 2342,
+        "batch_size": 64,
+        "weight_decay": 0,
+        "textaudio_emb_freeze": false,
+        "lr_policy": "cosine_delay",
+        "lr_base": 0.0001,
+        "lr_cosine_start_epoch": 200,
+        "lr_cosine_end_epoch": -1,
+        "lr_min": 1e-06,
+        "epochs": 10000,
+        "face_loss_weight": 2.5,
+        "vad_use_face_logits": true
+      },
+      "body_deterioration_from_best_total": {
+        "upper": {
+          "ce_contribution_change": 0.9062438011169434,
+          "fraction_of_net_total_increase": 0.21545427574817982
+        },
+        "lower": {
+          "ce_contribution_change": 1.717966727912426,
+          "fraction_of_net_total_increase": 0.4084367547294021
+        },
+        "face": {
+          "ce_contribution_change": 1.5819888710975647,
+          "fraction_of_net_total_increase": 0.3761087977031282
+        }
+      }
+    },
+    "2ww4lkuq": {
+      "name": "teacher-c-shareddepth-supervised-rvq-scott-bs64",
+      "state": "finished",
+      "latest_validation_epoch": 1420,
+      "latest_training_epoch": 1424,
+      "validation_count": 71,
+      "metrics": {
+        "val/ce_loss": {
+          "best_epoch": 280,
+          "best_value": 6.144205570220947,
+          "tied_best_epochs": [
+            280
+          ],
+          "latest_value": 10.055438041687012,
+          "change_from_best_percent": 63.65725278500758
+        },
+        "val/temporal_q0_ce": {
+          "best_epoch": 800,
+          "best_value": 3.765625,
+          "tied_best_epochs": [
+            800
+          ],
+          "latest_value": 4.25,
+          "change_from_best_percent": 12.863070539419086
+        },
+        "val/temporal_q0_acc": {
+          "best_epoch": 800,
+          "best_value": 0.24785184860229492,
+          "tied_best_epochs": [
+            800
+          ],
+          "latest_value": 0.19911110401153564,
+          "change_from_best_percent": -19.66527377771108
+        },
+        "derived/depth_mean_ce": {
+          "best_epoch": 280,
+          "best_value": 6.232387442337839,
+          "tied_best_epochs": [
+            280
+          ],
+          "latest_value": 10.360987412302118,
+          "change_from_best_percent": 66.24427650177655
+        },
+        "val/kinematic_hard_ce": {
+          "best_epoch": 220,
+          "best_value": 7.96875,
+          "tied_best_epochs": [
+            220
+          ],
+          "latest_value": 15.0625,
+          "change_from_best_percent": 89.01960784313725
+        },
+        "val/ce_upper": {
+          "best_epoch": 440,
+          "best_value": 2.578328415751457,
+          "tied_best_epochs": [
+            440
+          ],
+          "latest_value": 3.078741043806076,
+          "change_from_best_percent": 19.408413024404148
+        },
+        "val/ce_lower": {
+          "best_epoch": 500,
+          "best_value": 1.969266951084137,
+          "tied_best_epochs": [
+            500
+          ],
+          "latest_value": 3.4891302436590195,
+          "change_from_best_percent": 77.17913976762544
+        },
+        "val/ce_face": {
+          "best_epoch": 180,
+          "best_value": 1.3749406337738037,
+          "tied_best_epochs": [
+            180
+          ],
+          "latest_value": 3.4875669479370117,
+          "change_from_best_percent": 153.65218412119194
+        }
+      },
+      "train_depth_hard_ce_at_best_total": 7.040178571428571,
+      "train_depth_hard_ce_at_latest_validation": 2.950892857142857,
+      "val_depth_hard_ce_at_best_total": 8.125,
+      "val_depth_hard_ce_at_latest_validation": 15.0625,
+      "latest_lr": 9.62441724908056e-05,
+      "parameters": 255342088,
+      "trainable_parameters": 255342088,
+      "train_samples": 477,
+      "val_samples": 54,
+      "eval_keys": [],
+      "nonfinite_metrics": 0,
+      "median_epoch_seconds_after_100": 3.682492256164551,
+      "config": {
+        "gestureformer_depformer_weights_per_step": false,
+        "random_seed": 2342,
+        "batch_size": 64,
+        "weight_decay": 0,
+        "textaudio_emb_freeze": false,
+        "lr_policy": "cosine_delay",
+        "lr_base": 0.0001,
+        "lr_cosine_start_epoch": 200,
+        "lr_cosine_end_epoch": -1,
+        "lr_min": 1e-06,
+        "epochs": 10000,
+        "face_loss_weight": 2.5,
+        "vad_use_face_logits": true
+      },
+      "body_deterioration_from_best_total": {
+        "upper": {
+          "ce_contribution_change": 0.46644723415374756,
+          "fraction_of_net_total_increase": 0.11925837637027673
+        },
+        "lower": {
+          "ce_contribution_change": 1.4014001414179802,
+          "fraction_of_net_total_increase": 0.3583014181953463
+        },
+        "face": {
+          "ce_contribution_change": 2.043385326862335,
+          "fraction_of_net_total_increase": 0.5224402644868624
+        }
+      }
+    }
+  },
+  "pairs": {
+    "foremotion": {
+      "epoch": 1060,
+      "original_id": "0st12z6a",
+      "shared_id": "7so4vnve",
+      "metrics": {
+        "val/ce_loss": {
+          "original": 6.364755153656006,
+          "shared": 6.962294101715088,
+          "delta": 0.597538948059082,
+          "change_percent": 9.388247208784573
+        },
+        "val/temporal_q0_ce": {
+          "original": 3.703125,
+          "shared": 3.75,
+          "delta": 0.046875,
+          "change_percent": 1.2658227848101333
+        },
+        "val/temporal_q0_acc": {
+          "original": 0.25999999046325684,
+          "shared": 0.24651850759983063,
+          "delta": -0.013481482863426208,
+          "change_percent": -5.185185906893874
+        },
+        "derived/depth_mean_ce": {
+          "original": 6.504840951216848,
+          "shared": 7.131362212331672,
+          "delta": 0.6265212611148234,
+          "change_percent": 9.631615374048796
+        },
+        "val/kinematic_hard_ce": {
+          "original": 9.1875,
+          "shared": 10.375,
+          "delta": 1.1875,
+          "change_percent": 12.925170068027203
+        },
+        "val/ce_upper": {
+          "original": 2.5299952030181885,
+          "shared": 2.6038524955511093,
+          "delta": 0.07385729253292084,
+          "change_percent": 2.919266109469776
+        },
+        "val/ce_lower": {
+          "original": 1.816886067390442,
+          "shared": 1.9544532150030136,
+          "delta": 0.13756714761257172,
+          "change_percent": 7.571589109610866
+        },
+        "val/ce_face": {
+          "original": 2.0178734958171844,
+          "shared": 2.403989017009735,
+          "delta": 0.38611552119255066,
+          "change_percent": 19.13477341334444
+        }
+      },
+      "body_share_of_matched_total_gap": {
+        "upper": 0.12360247440409215,
+        "lower": 0.23022289686624692,
+        "face": 0.6461763244834934
+      },
+      "best_total_ce_change_percent": 3.9452741747387776,
+      "config_differences": {
+        "config": [
+          "configs/gtdm3_foremotion_c_rvq_beatx_scott.yaml",
+          "configs/gtdm3_foremotion_c_shareddepth_rvq_beatx_scott.yaml"
+        ],
+        "gestureformer_depformer_weights_per_step": [
+          null,
+          false
+        ],
+        "name": [
+          "0908_1745_gtdm3_foremotion_c_rvq_scott_bf16",
+          "0908_2232_gtdm3_foremotion_c_shareddepth_rvq_scott_bf16"
+        ],
+        "project_name": [
+          "gtdm3_foremotion_c_rvq_scott_bf16",
+          "gtdm3_foremotion_c_shareddepth_rvq_scott_bf16"
+        ],
+        "wandb_group": [
+          "future-only-c-scott",
+          "future-only-c-shareddepth-scott"
+        ],
+        "wandb_name": [
+          "foremotion-c-rvq-scott-bs64",
+          "foremotion-c-shareddepth-rvq-scott-bs64"
+        ],
+        "wandb_tags": [
+          [
+            "foremotion",
+            "condition-c",
+            "future-only",
+            "shared-teacher",
+            "scott",
+            "rvq",
+            "bs64"
+          ],
+          [
+            "foremotion",
+            "condition-c",
+            "future-only",
+            "shared-teacher",
+            "shared-depth",
+            "scott",
+            "rvq",
+            "bs64"
+          ]
+        ]
+      }
+    },
+    "teacher": {
+      "epoch": 1420,
+      "original_id": "8hir7gzc",
+      "shared_id": "2ww4lkuq",
+      "metrics": {
+        "val/ce_loss": {
+          "original": 8.941631317138672,
+          "shared": 10.055438041687012,
+          "delta": 1.1138067245483398,
+          "change_percent": 12.456415222728712
+        },
+        "val/temporal_q0_ce": {
+          "original": 4.09375,
+          "shared": 4.25,
+          "delta": 0.15625,
+          "change_percent": 3.8167938931297662
+        },
+        "val/temporal_q0_acc": {
+          "original": 0.2136296182870865,
+          "shared": 0.19911110401153564,
+          "delta": -0.014518514275550842,
+          "change_percent": -6.796114879557624
+        },
+        "derived/depth_mean_ce": {
+          "original": 9.196782965409128,
+          "shared": 10.360987412302118,
+          "delta": 1.16420444689299,
+          "change_percent": 12.658822669533333
+        },
+        "val/kinematic_hard_ce": {
+          "original": 12.8125,
+          "shared": 15.0625,
+          "delta": 2.25,
+          "change_percent": 17.560975609756092
+        },
+        "val/ce_upper": {
+          "original": 3.0610378980636597,
+          "shared": 3.078741043806076,
+          "delta": 0.017703145742416382,
+          "change_percent": 0.5783380125288451
+        },
+        "val/ce_lower": {
+          "original": 3.1725151240825653,
+          "shared": 3.4891302436590195,
+          "delta": 0.31661511957645416,
+          "change_percent": 9.97994043189987
+        },
+        "val/ce_face": {
+          "original": 2.708078920841217,
+          "shared": 3.4875669479370117,
+          "delta": 0.7794880270957947,
+          "change_percent": 28.783800246621325
+        }
+      },
+      "body_share_of_matched_total_gap": {
+        "upper": 0.015894270839130722,
+        "lower": 0.2842639684231076,
+        "face": 0.6998413727587119
+      },
+      "best_total_ce_change_percent": 3.055218334253218,
+      "config_differences": {
+        "config": [
+          "configs/gtdm3_teacher_c_rvq_beatx_scott.yaml",
+          "configs/gtdm3_teacher_c_shareddepth_rvq_beatx_scott.yaml"
+        ],
+        "gestureformer_depformer_weights_per_step": [
+          null,
+          false
+        ],
+        "name": [
+          "0908_1746_gtdm3_teacher_c_rvq_scott_bf16",
+          "0908_2232_gtdm3_teacher_c_shareddepth_rvq_scott_bf16"
+        ],
+        "project_name": [
+          "gtdm3_teacher_c_rvq_scott_bf16",
+          "gtdm3_teacher_c_shareddepth_rvq_scott_bf16"
+        ],
+        "wandb_group": [
+          "future-only-c-scott",
+          "future-only-c-shareddepth-scott"
+        ],
+        "wandb_name": [
+          "teacher-c-supervised-rvq-scott-bs64",
+          "teacher-c-shareddepth-supervised-rvq-scott-bs64"
+        ],
+        "wandb_tags": [
+          [
+            "teacher-only",
+            "condition-c",
+            "future-only",
+            "supervised-teacher",
+            "scott",
+            "rvq",
+            "bs64"
+          ],
+          [
+            "teacher-only",
+            "condition-c",
+            "future-only",
+            "supervised-teacher",
+            "shared-depth",
+            "scott",
+            "rvq",
+            "bs64"
+          ]
+        ]
+      }
+    }
+  }
+}

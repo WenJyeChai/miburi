@@ -1,0 +1,111 @@
+{
+  "7so4vnve": {
+    "name": "Shared-depth ForeMotion C",
+    "latest_epoch": 1060,
+    "parts": {
+      "upper": {
+        "metric": "val/ce_upper",
+        "codebooks": 8,
+        "best_epoch": 740,
+        "best_logged_ce": 2.557786747813225,
+        "latest_logged_ce": 2.6038524955511093,
+        "increase_percent": 1.801000328790825,
+        "best_mean_per_codebook_ce": 6.394466869533062,
+        "latest_mean_per_codebook_ce": 6.509631238877773
+      },
+      "lower": {
+        "metric": "val/ce_lower",
+        "codebooks": 8,
+        "best_epoch": 800,
+        "best_logged_ce": 1.8714845553040504,
+        "latest_logged_ce": 1.9544532150030136,
+        "increase_percent": 4.433307208644521,
+        "best_mean_per_codebook_ce": 4.678711388260126,
+        "latest_mean_per_codebook_ce": 4.886133037507534
+      },
+      "face": {
+        "metric": "val/ce_face",
+        "codebooks": 4,
+        "best_epoch": 220,
+        "best_logged_ce": 1.3703574538230896,
+        "latest_logged_ce": 2.403989017009735,
+        "increase_percent": 75.42787907658473,
+        "best_mean_per_codebook_ce": 6.851787269115448,
+        "latest_mean_per_codebook_ce": 12.019945085048676
+      }
+    },
+    "upper_depth_only": {
+      "metric": "val/kinematic_upper_hard_ce",
+      "best_logged_ce": 2.359375,
+      "tied_best_epochs": [
+        380,
+        400,
+        420,
+        440,
+        460,
+        480,
+        500,
+        520,
+        540,
+        560,
+        580,
+        600,
+        620,
+        640,
+        660,
+        680,
+        700,
+        720
+      ],
+      "latest_logged_ce": 2.421875,
+      "increase_percent": 2.6490066225165476
+    }
+  },
+  "2ww4lkuq": {
+    "name": "Shared-depth teacher C",
+    "latest_epoch": 1420,
+    "parts": {
+      "upper": {
+        "metric": "val/ce_upper",
+        "codebooks": 8,
+        "best_epoch": 440,
+        "best_logged_ce": 2.578328415751457,
+        "latest_logged_ce": 3.078741043806076,
+        "increase_percent": 19.408413024404148,
+        "best_mean_per_codebook_ce": 6.445821039378643,
+        "latest_mean_per_codebook_ce": 7.69685260951519
+      },
+      "lower": {
+        "metric": "val/ce_lower",
+        "codebooks": 8,
+        "best_epoch": 500,
+        "best_logged_ce": 1.969266951084137,
+        "latest_logged_ce": 3.4891302436590195,
+        "increase_percent": 77.17913976762544,
+        "best_mean_per_codebook_ce": 4.923167377710342,
+        "latest_mean_per_codebook_ce": 8.722825609147549
+      },
+      "face": {
+        "metric": "val/ce_face",
+        "codebooks": 4,
+        "best_epoch": 180,
+        "best_logged_ce": 1.3749406337738037,
+        "latest_logged_ce": 3.4875669479370117,
+        "increase_percent": 153.65218412119194,
+        "best_mean_per_codebook_ce": 6.8747031688690186,
+        "latest_mean_per_codebook_ce": 17.43783473968506
+      }
+    },
+    "upper_depth_only": {
+      "metric": "val/kinematic_upper_hard_ce",
+      "best_logged_ce": 2.359375,
+      "tied_best_epochs": [
+        420,
+        440,
+        480
+      ],
+      "latest_logged_ce": 2.84375,
+      "increase_percent": 20.529801324503303
+    }
+  }
+}

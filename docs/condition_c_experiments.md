@@ -195,6 +195,16 @@ passed parsing. The shared scale-1 C generator also matched all 20 batched
 greedy predictions with and without classifier-free guidance. These are small
 synthetic checks; full dataset training and CUDA motion benchmarks were not run.
 
+## Face loss and shorter cosine decay
+
+The [face-loss and cosine experiment guide](condition_c_face_cosine_experiments.md)
+adds face weight 1.0, cosine decay ending at epoch 800, and their combination
+for both ForeMotion C and the directly supervised teacher C. It uses the
+original codebook-specific depth weights, provides runnable commands and
+explains which unweighted validation metrics remain comparable across face
+weights. The earlier baseline and shared-depth configurations retain their
+original settings.
+
 ## Interpret and evaluate
 
 Training retains `pose_length: 250` at 25 fps: the privileged future is the
