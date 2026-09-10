@@ -124,6 +124,7 @@ def reconstruction_metrics(
     target_translation=None, reconstructed_translation=None,
     target_translation_velocity=None, reconstructed_translation_velocity=None,
     target_contacts=None, reconstructed_contacts=None,
+    translation_velocity_valid_mask=None,
     valid_mask=None, warmup_frames=0, fps=25,
 ):
     """Measure part-local canonical rotations, expressions and root translation.
@@ -135,6 +136,11 @@ def reconstruction_metrics(
     values are scored directly, without clipping or a classification threshold.
     Supplied decoder velocities are already m/s and are NOT multiplied by FPS;
     the separate finite-difference translation metric uses FPS explicitly.
+    translation_velocity_valid_mask optionally identifies direct-velocity
+    targets whose source difference stencil is valid (adjacent endpoints,
+    t-1/t+1 at interior frames in codec preprocessing). It is intersected with
+    the effective frame mask ONLY for translation_velocity_direct_rmse_m_s.
+    The caller includes source-frame validity and warmup in this stencil mask.
     """
     fps = _fps(fps)
     metrics = {}
@@ -179,6 +185,8 @@ def reconstruction_metrics(
         target, predicted, valid = checked_pair(target_value, predicted_value, 1, name)
         if dimension is not None and target.shape[-1] != dimension:
             raise ValueError(f"{name} requires {dimension} coordinates")
+        if name == "translation_velocity_direct_rmse_m_s" and translation_velocity_valid_mask is not None:
+            valid = valid & _mask(target, translation_velocity_valid_mask, 0)
         metrics[name] = _stat((predicted - target).square(), valid, "rmse")
         if name == "translation_rmse_m":
             pairs = valid[:, 1:] & valid[:, :-1]

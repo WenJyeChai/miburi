@@ -24,11 +24,12 @@ codec YAML defaults do not override the production model factory.
    `MAX_SAMPLES_PER_SPLIT=8` gives a setup check; `None` evaluates every selected
    sample. The default splits are train and validation. Add test explicitly
    when needed.
-4. Run the cells in order. Inspect the preflight paths and the result manifest,
-   then the train/validation table, codebook distributions and difficult clips.
+4. After syncing updated helper files, restart the notebook kernel and run the
+   cells in order. Inspect preflight paths and quality coverage, then the
+   train/validation table, codebook distributions and difficult clips.
 5. Run the export cell. It creates a fresh timestamped directory under
    `reports/codec_reconstruction/` with CSV tables, a JSON manifest and PNG/SVG
-   figures.
+   figures. Quality reports are exported even if every selected clip is skipped.
 
 The notebook needs Jupyter/IPython plus the existing training dependencies. It
 does not install dependencies or download assets. Basic parameter-space metrics
@@ -45,6 +46,8 @@ full streaming evaluation is intended for the training GPU environment.
 - Foot-contact RMSE over all four channels, using unrounded decoder outputs.
 - Optional SMPL-X joint/vertex errors with explicit spatial and velocity units.
 - Per-clip errors and pooled train/validation summaries.
+- All-frame and valid-frame scores, plus a fully valid clip subset comparison.
+- Per-split quality coverage and per-clip exclusion reasons.
 - Per-stage code counts, active fraction, empirical entropy/perplexity, and
   held-out token mass absent from the audited training set.
 
@@ -53,13 +56,59 @@ does not average per-clip RMSE values. Trajectory and vertex velocity metrics
 use two adjacent valid frames within one clip. The direct decoded-velocity
 metric uses the production mixed finite-difference target. Changing the warmup
 exclusion applies the same rule to all splits. A larger training set naturally visits more codes, so
-codebook coverage should be interpreted alongside sample/token counts.
+codebook coverage should be interpreted alongside sample/token counts. Code
+usage has scope `all_evaluated_frames`: every token from each complete evaluated
+clip is counted once, including flagged frames and warmup. Reconstruction metric
+scopes do not multiply code counts.
 
 `MODE="streaming"` is the default production encode/decode path, resetting
 streaming state for each clip. The alternative full-clip mode is separately
 labelled and should not be silently mixed with streaming results. Quantization
 is canonical and frozen; codebook usage is counted from eval-mode encodings,
 not by enabling training-time EMA updates or RVQ augmentation.
+
+## Data quality and metric scopes
+
+Finite clips with some `pose_valid=False` frames are evaluated. The cache
+builder can accept partially valid clips, so the audit no longer requires an
+all-true mask before reconstruction. It does not delete frames, compress time,
+restart at validity gaps, or substitute a different clip.
+
+NaN/Inf in a required input skips the entire affected clip and records its ID,
+fields and reason. Missing fields, invalid shapes, unreadable data and codec
+errors still stop the audit with a specific exception. A sample cap limits
+selected clips; skipped clips are not replaced to fill the cap.
+
+Reconstruction records contain a `metric_scope` column:
+
+| Scope | Scored observations |
+| --- | --- |
+| `all_frames` | All frames in the complete evaluated clip, after warmup exclusion. |
+| `valid_frames` | Only frames with true `pose_valid`, after warmup exclusion. |
+| `fully_valid_clips` | All scored frames from clips whose original validity mask is entirely true. |
+
+The codec reconstructs the full timeline once. Valid-frame masking changes only
+scoring: flagged inputs can still influence later outputs through causal state.
+Trajectory and vertex velocities require both adjacent frames to be valid.
+Direct decoded-velocity targets use mixed finite differences, so their valid
+score conservatively requires the current frame and the target's source
+neighbors to be valid after warmup exclusion. Every scope also excludes source
+frames removed by warmup from the direct-velocity score. No scored derivative
+bridges a masked gap.
+
+Zero observations produce a missing value with count zero, never a zero error.
+When no fully valid clips are available, that scope has no metric rows and is
+listed in the manifest's no-support findings. The scope-aware table retains
+missing scores; the plot displays one selected scope (`PLOT_SCOPE`) at a time.
+Do not average or merge scopes when interpreting exported CSVs.
+
+`quality_summary.csv` reports available, selected, evaluated and skipped clip
+counts. Its fully-valid/flagged clip counts and valid/flagged frame counts refer
+to evaluated clips; `selected_frames` also includes skipped clips. Per-clip
+details are retained in `clip_quality.csv`, with exclusions repeated in
+`skipped_clips.csv`. Review coverage even when metrics look good: a fully valid
+subset may contain easier motion, and `pose_valid` is a whole-pose heuristic,
+not a facial tracking confidence score.
 
 ## Facial metric definitions
 
@@ -101,15 +150,18 @@ on the machine with the HDF5 cache.
 
 ## Validation
 
-The seven CPU smoke checks passed, including strict loading and repeated frozen
-streaming reconstruction with all three released checkpoints:
+All 11 default CPU smoke checks passed. They cover metric masks and pooling, quality decisions and
+exclusion logs, unchanged streaming inputs and code counts, and frozen state.
+The optional checkpoint check loads all three released codecs:
 
 ```bash
 python -B -m scripts.smoke_test_codec_reconstruction_audit --release-codecs
 ```
 
-All nine notebook code cells were also executed headlessly with a synthetic
-HDF5 cache, the released checkpoints and the actual SMPL-X asset. Reconstruction,
-code-usage tables, state checks and report exports passed. This verifies the
+All nine notebook code cells were also executed headlessly with synthetic
+HDF5 caches, the released checkpoints and the actual SMPL-X asset. Three cases
+passed: mixed validity flags, all frames flagged, and all selected clips skipped
+for nonfinite inputs. Reconstruction scopes, zero-support geometry metrics,
+code-usage tables, state checks and all 13 report exports passed. This verifies the
 workflow; it does not measure Scott reconstruction quality. The notebook is
 saved with empty outputs so synthetic results cannot be mistaken for real data.

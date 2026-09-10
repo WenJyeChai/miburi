@@ -35,11 +35,14 @@ def _close(actual, expected, *, atol=1e-6):
     )
 
 
-def _make_hdf5(path: Path, frames: int = 8, invalid_val: bool = True):
+def _make_hdf5(path: Path, frames: int = 8, invalid_val: bool = True,
+               extra_scott_train: bool = False):
     """Use the real UNIFIEDDataset chunk schema and speaker ID convention."""
     ids = ["2_scott_0_1_1_C0", "2_scott_0_2_1_C0", "9_miranda_0_1_1_C0"]
     splits = ["train", "val", "train"]
     speakers = ["scott", "scott", "miranda"]
+    if extra_scott_train:
+        ids[2], speakers[2] = "2_scott_0_3_1_C0", "scott"
     with h5py.File(path, "w") as file:
         text_dtype = h5py.string_dtype("utf-8")
         for key, values in {
@@ -135,6 +138,67 @@ class _IdentityFaceCodec(_StatefulToyCodec):
     def decode(self, codes):
         assert not self.training and not torch.is_grad_enabled()
         return self.last_values.clone()
+
+
+class _FlaggedFrameErrorFaceCodec(_IdentityFaceCodec):
+    def decode(self, codes):
+        decoded = super().decode(codes)
+        if self.offset == 2:
+            decoded[:, 1, 6:] += 8  # Global frame 3, expression coordinates only.
+        return decoded
+
+
+class _FlaggedFrameErrorLowerCodec(_IdentityFaceCodec):
+    def __init__(self):
+        super().__init__()
+        self.channels = 61
+        self.num_codebooks = 8
+
+    def decode(self, codes):
+        decoded = super().decode(codes)
+        if self.offset == 2:
+            decoded[:, 1, 54:57] += 8  # Frame 3, lower root velocity only.
+        return decoded
+
+
+@contextmanager
+def _audit_case(*, invalid_val=False, extra_scott_train=False, splits=("train", "val"),
+                parts=("face",)):
+    from scripts import codec_reconstruction_audit as audit
+    import yaml
+
+    with TemporaryDirectory(prefix="codec-audit-pipeline-") as directory:
+        folder = Path(directory)
+        data_path = folder / "tiny_beatx.h5"
+        ids = _make_hdf5(data_path, invalid_val=invalid_val, extra_scott_train=extra_scott_train)
+        config = yaml.safe_load((ROOT / audit.DEFAULT_CONFIG).read_text(encoding="utf-8"))
+        config["pose_length"] = 8
+        config_path = folder / "test_config.yaml"
+        config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+        dummy_checkpoint = folder / "toy.safetensors"
+        dummy_checkpoint.write_bytes(b"toy checkpoint; loader is replaced in this test")
+        settings = audit.AuditSettings(
+            lm_config=str(config_path), repository_root=str(ROOT), device="cpu", splits=splits,
+            parts=parts, path_overrides={"beatx_cache_path": str(data_path),
+                "embody3d_cache_path": None, "facecodec_ckpt": str(dummy_checkpoint),
+                "lowerbodycodec_ckpt": str(dummy_checkpoint)},
+        )
+        yield audit, settings, data_path, ids
+
+
+def _run_toy(audit, settings, model=None):
+    model = model or _IdentityFaceCodec()
+    model.eval().requires_grad_(False)
+    assert len(settings.parts) == 1
+    with patch.object(audit, "load_codecs", return_value={settings.parts[0]: model}):
+        return audit.run_audit(settings)
+
+
+def _summary(result, split, scope, metric="expression_rmse"):
+    rows = [row for row in result["summary_records"] if row["split"] == split
+            and row["metric_scope"] == scope and row["metric"] == metric]
+    assert len(rows) == 1, rows
+    return rows[0]
 
 
 def test_unified_dataset_fixture():
@@ -277,24 +341,7 @@ def test_frozen_streaming_resets_and_input_guards():
 
 
 def test_full_audit_usage_and_codebook_mutation_guard():
-    from scripts import codec_reconstruction_audit as audit
-    import yaml
-
-    with TemporaryDirectory(prefix="codec-audit-pipeline-") as directory:
-        folder = Path(directory)
-        data_path = folder / "tiny_beatx.h5"
-        _make_hdf5(data_path, invalid_val=False)
-        config = yaml.safe_load((ROOT / audit.DEFAULT_CONFIG).read_text(encoding="utf-8"))
-        config["pose_length"] = 8
-        config_path = folder / "test_config.yaml"
-        config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-        dummy_checkpoint = folder / "toy.safetensors"
-        dummy_checkpoint.write_bytes(b"toy checkpoint; loader is replaced in this test")
-        settings = audit.AuditSettings(
-            lm_config=str(config_path), repository_root=str(ROOT), device="cpu",
-            parts=("face",), path_overrides={"beatx_cache_path": str(data_path),
-                "embody3d_cache_path": None, "facecodec_ckpt": str(dummy_checkpoint)},
-        )
+    with _audit_case() as (audit, settings, data_path, _):
         model = _IdentityFaceCodec().eval().requires_grad_(False)
         with patch.object(audit, "load_codecs", return_value={"face": model}):
             result = audit.run_audit(settings)
@@ -304,6 +351,7 @@ def test_full_audit_usage_and_codebook_mutation_guard():
         assert len(result["codebook_records"]) == 8
         for row in result["codebook_records"]:
             assert row["token_count"] == 4
+            assert row["usage_scope"] == "all_evaluated_frames"
             if row["split"] == "train":
                 assert row["active_codes"] == 2
                 _close(row["entropy_nats"], math.log(2))
@@ -315,7 +363,7 @@ def test_full_audit_usage_and_codebook_mutation_guard():
                 _close(row["perplexity"], math.sqrt(8))
                 _close(row["unseen_train_mass"], .5)
         # The audit must not write an index cache beside the source HDF5.
-        assert not list(folder.glob("*.chunk_index*"))
+        assert not list(data_path.parent.glob("*.chunk_index*"))
         mutating = _IdentityFaceCodec(mutate=True).eval().requires_grad_(False)
         with patch.object(audit, "load_codecs", return_value={"face": mutating}):
             try:
@@ -324,15 +372,175 @@ def test_full_audit_usage_and_codebook_mutation_guard():
                 assert "parameters/buffers changed" in str(error)
             else:
                 raise AssertionError("Codebook buffer mutation went undetected")
+
+
+def test_finite_flags_change_scoring_without_changing_reconstruction():
+    with _audit_case(invalid_val=True) as (audit, settings, data_path, ids):
+        model = _FlaggedFrameErrorFaceCodec()
+        result = _run_toy(audit, settings, model)
+        assert model.entries == 2, "Metric scopes must not reconstruct a clip repeatedly"
+        assert not result["skipped_records"]
+        _close(_summary(result, "val", "all_frames")["value"], math.sqrt(8))
+        valid = _summary(result, "val", "valid_frames")
+        _close(valid["value"], 0)
+        assert valid["count"] == 700
+        assert not [row for row in result["summary_records"]
+                    if row["split"] == "val" and row["metric_scope"] == "fully_valid_clips"]
+        train_full = _summary(result, "train", "fully_valid_clips")
+        assert train_full["count"] == 800
+        quality = {row["split"]: row for row in result["quality_records"]}
+        assert quality["val"]["filechunk_id"] == ids[1]
+        assert quality["val"]["status"] == "evaluated"
+        assert quality["val"]["valid_frames"] == 7
+        assert quality["val"]["flagged_frames"] == 1
+        _close(quality["val"]["valid_fraction"], 7 / 8)
+        assert quality["train"]["fully_valid"] and not quality["val"]["fully_valid"]
+        assert len(result["codebook_records"]) == 8
+        assert all(row["token_count"] == 4 for row in result["codebook_records"])
+
+        # Warmup affects denominators but never reclassifies a raw flagged clip
+        # as fully valid, even if every flagged frame is inside the warmup.
         with h5py.File(data_path, "a") as file:
-            file["2_scott_0_2_1_C0"]["pose_valid"][3] = False
-        with patch.object(audit, "load_codecs", return_value={"face": model}):
+            file[ids[1]]["pose_valid"][:] = [False, True, True, True, True, True, True, True]
+        settings.warmup_frames = 2
+        warmed = _run_toy(audit, settings)
+        assert _summary(warmed, "val", "valid_frames")["count"] == 600
+        assert _summary(warmed, "val", "all_frames")["count"] == 600
+        assert not [row for row in warmed["summary_records"]
+                    if row["split"] == "val" and row["metric_scope"] == "fully_valid_clips"]
+        assert all(row["token_count"] == 4 for row in warmed["codebook_records"])
+
+
+def test_all_flagged_frames_report_empty_metrics_and_quality():
+    with _audit_case(splits=("val",)) as (audit, settings, data_path, ids):
+        with h5py.File(data_path, "a") as file:
+            file[ids[1]]["pose_valid"][:] = False
+        model = _FlaggedFrameErrorFaceCodec()
+        result = _run_toy(audit, settings, model)
+        assert model.entries == 1
+        valid = _summary(result, "val", "valid_frames")
+        assert valid["count"] == 0 and valid["value"] is None
+        _close(_summary(result, "val", "all_frames")["value"], math.sqrt(8))
+        assert not [row for row in result["summary_records"]
+                    if row["metric_scope"] == "fully_valid_clips"]
+        quality = result["quality_summary_records"][0]
+        assert quality["evaluated_clips"] == 1 and quality["skipped_clips"] == 0
+        assert quality["valid_frames"] == 0 and quality["flagged_frames"] == 8
+        assert quality["valid_fraction"] == 0
+        assert all(row["token_count"] == 4 and row["unseen_train_mass"] is None
+                   for row in result["codebook_records"])
+
+
+def test_direct_velocity_target_stencil_excludes_flagged_neighbors():
+    with _audit_case(invalid_val=True, splits=("val",), parts=("lower",)) as (
+        audit, settings, data_path, ids,
+    ):
+        result = _run_toy(audit, settings, _FlaggedFrameErrorLowerCodec())
+        metric = "translation_velocity_direct_rmse_m_s"
+        # The velocity target at an interior t uses translations t-1 and t+1;
+        # validity additionally requires t. Flag 3 excludes direct targets 2,3,4.
+        all_frames = _summary(result, "val", "all_frames", metric)
+        valid = _summary(result, "val", "valid_frames", metric)
+        assert all_frames["count"] == 8 * 3
+        assert valid["count"] == 5 * 3
+        _close(all_frames["value"], math.sqrt(8))
+        _close(valid["value"], 0)
+        assert _summary(result, "val", "valid_frames", "translation_velocity_rmse_m_s")["count"] == 5 * 3
+
+        settings.warmup_frames = 2
+        warmed = _run_toy(audit, settings, _FlaggedFrameErrorLowerCodec())
+        assert _summary(warmed, "val", "valid_frames", metric)["count"] == 3 * 3
+        assert _summary(warmed, "val", "all_frames", metric)["count"] == 5 * 3
+        with h5py.File(data_path, "a") as file:
+            file[ids[1]]["pose_valid"][:] = True
+        all_valid_warmed = _run_toy(audit, settings, _FlaggedFrameErrorLowerCodec())
+        for scope in ("all_frames", "valid_frames", "fully_valid_clips"):
+            row = _summary(all_valid_warmed, "val", scope, metric)
+            assert row["count"] == 5 * 3
+            _close(row["value"], _summary(all_valid_warmed, "val", "all_frames", metric)["value"])
+        # Endpoint derivatives require both endpoint and its single neighbor.
+        settings.warmup_frames = 0
+        with h5py.File(data_path, "a") as file:
+            file[ids[1]]["pose_valid"][:] = [False, True, True, True, True, True, True, False]
+        endpoints = _run_toy(audit, settings, _FlaggedFrameErrorLowerCodec())
+        assert _summary(endpoints, "val", "valid_frames", metric)["count"] == 4 * 3
+
+
+def test_nonfinite_clips_are_logged_without_replacement():
+    with _audit_case(extra_scott_train=True, splits=("train",)) as (audit, settings, data_path, ids):
+        with h5py.File(data_path, "a") as file:
+            file[ids[0]]["motion"][3, 22, 0] = float("nan")
+        model = _IdentityFaceCodec()
+        result = _run_toy(audit, settings, model)
+        assert model.entries == 1
+        skipped = result["skipped_records"]
+        assert len(skipped) == 1 and skipped[0]["filechunk_id"] == ids[0]
+        assert skipped[0]["status"] == "skipped" and "motion" in skipped[0]["nonfinite_fields"]
+        assert skipped[0]["reason"]
+        assert {row["filechunk_id"] for row in result["sample_records"]} == {ids[2]}
+        quality = result["quality_summary_records"][0]
+        assert quality["available_clips"] == quality["selected_clips"] == 2
+        assert quality["evaluated_clips"] == quality["skipped_clips"] == 1
+        assert quality["selected_frames"] == 16 and quality["evaluated_frames"] == 8
+        assert quality["valid_frames"] == 8 and quality["flagged_frames"] == 0
+
+        # Every selected clip nonfinite: return a useful quality report with no
+        # fabricated metrics. A sample cap counts selected clips, not successes.
+        with h5py.File(data_path, "a") as file:
+            file[ids[2]]["expressions"][2, 0] = float("inf")
+        model = _IdentityFaceCodec()
+        all_skipped = _run_toy(audit, settings, model)
+        assert model.entries == 0
+        assert not all_skipped["summary_records"] and not all_skipped["sample_records"]
+        assert not all_skipped["codebook_records"] and len(all_skipped["skipped_records"]) == 2
+        quality = all_skipped["quality_summary_records"][0]
+        assert quality["selected_clips"] == quality["skipped_clips"] == 2
+        assert quality["evaluated_frames"] == quality["valid_frames"] == quality["flagged_frames"] == 0
+        assert quality["valid_fraction"] is None
+        settings.max_samples_per_split = 1
+        capped = _run_toy(audit, settings)
+        assert len(capped["quality_records"]) == len(capped["skipped_records"]) == 1
+        assert capped["quality_summary_records"][0]["selected_clips"] == 1
+        assert capped["quality_summary_records"][0]["available_clips"] == 2
+        with h5py.File(data_path, "a") as file:
+            file[ids[0]]["motion"][:] = 0
+            file[ids[2]]["expressions"][:] = 2
+        baseline_cap = _run_toy(audit, settings)
+        selected_id = baseline_cap["quality_records"][0]["filechunk_id"]
+        with h5py.File(data_path, "a") as file:
+            file[selected_id]["motion"][0, 0, 0] = float("nan")
+        model = _IdentityFaceCodec()
+        capped_bad = _run_toy(audit, settings, model)
+        assert model.entries == 0, "The other valid clip must not replace a capped nonfinite selection"
+        assert capped_bad["skipped_records"][0]["filechunk_id"] == selected_id
+        assert len(capped_bad["quality_records"]) == 1
+
+
+def test_malformed_inputs_and_model_errors_stay_fatal():
+    for problem in ("missing", "shape", "read", "mask_values", "model"):
+        with _audit_case(splits=("val",)) as (audit, settings, data_path, ids):
+            with h5py.File(data_path, "a") as file:
+                if problem == "missing":
+                    del file[ids[1]]["expressions"]
+                elif problem == "shape":
+                    del file[ids[1]]["expressions"]
+                    file[ids[1]].create_dataset("expressions", data=np.zeros((8, 99), np.float32))
+                    file[ids[1]]["motion"][0, 0, 0] = float("nan")
+                elif problem == "read":
+                    del file[ids[1]]
+                elif problem == "mask_values":
+                    del file[ids[1]]["pose_valid"]
+                    file[ids[1]].create_dataset("pose_valid", data=np.full(8, 2, np.int32))
+            model = _IdentityFaceCodec()
+            if problem == "model":
+                model.encode = lambda inputs: (_ for _ in ()).throw(RuntimeError("sentinel model failure"))
             try:
-                audit.run_audit(settings)
-            except ValueError as error:
-                assert "refuses replacement" in str(error)
+                _run_toy(audit, settings, model)
+            except (KeyError, ValueError, RuntimeError) as error:
+                if problem == "model":
+                    assert "sentinel model failure" in str(error)
             else:
-                raise AssertionError("Invalid pose data was accepted or substituted")
+                raise AssertionError(f"{problem} error was silently skipped")
 
 
 def test_release_codec_reconstruction():
@@ -387,6 +595,11 @@ def main():
         test_unified_dataset_fixture,
         test_frozen_streaming_resets_and_input_guards,
         test_full_audit_usage_and_codebook_mutation_guard,
+        test_finite_flags_change_scoring_without_changing_reconstruction,
+        test_all_flagged_frames_report_empty_metrics_and_quality,
+        test_direct_velocity_target_stencil_excludes_flagged_neighbors,
+        test_nonfinite_clips_are_logged_without_replacement,
+        test_malformed_inputs_and_model_errors_stay_fatal,
     ]
     if args.release_codecs:
         checks.append(test_release_codec_reconstruction)

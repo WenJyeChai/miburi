@@ -28,6 +28,8 @@ from typing import Any, Callable
 DEFAULT_CONFIG = "configs/gtdm3_teacher_c_face1_cos800_rvq_beatx_scott.yaml"
 PARTS = ("upper", "lower", "face")
 CHECKPOINT_FIELDS = dict(upper="upperbodycodec_ckpt", lower="lowerbodycodec_ckpt", face="facecodec_ckpt")
+METRIC_SCOPES = ("all_frames", "valid_frames", "fully_valid_clips")
+USAGE_SCOPE = "all_evaluated_frames"
 
 
 @dataclass
@@ -381,13 +383,132 @@ def _overlaps(samples):
     return overlaps
 
 
-def run_audit(settings: AuditSettings, progress: Callable[[dict], None] | None = None) -> dict:
-    """Run the audit. Fail on invalid/missing inputs; never resample or write files.
+def _read_sample_quality(dataset, index, settings, args):
+    """Validate raw HDF5 structure, then classify finite inputs before loading.
 
-    ``progress`` receives split, completed, total, filechunk_id and elapsed_seconds.
+    False pose_valid flags are a metric mask, never a reason to replace or
+    remove a frame. Malformed masks and missing/incorrectly shaped fields are
+    schema errors. Only NaN/Inf in required numerical inputs cause a clip skip.
+    """
+    import numpy as np
+    import torch
+
+    reference = dataset._chunk_refs[index]
+    label = f"{dataset.loader_type}:{reference.chunk_id}"
+    group = dataset._get_h5(reference.hdf5_path)[reference.chunk_id]
+
+    def read(field):
+        if field not in group:
+            raise KeyError(f"Missing required HDF5 field {field!r} at {label}")
+        try:
+            values = np.asarray(group[field][...])
+        except (OSError, TypeError) as error:
+            raise RuntimeError(f"Cannot read HDF5 field {field!r} at {label} in {reference.hdf5_path}") from error
+        if values.dtype.kind not in "buif":
+            raise TypeError(f"HDF5 field {field!r} at {label} must contain real numeric values; got {values.dtype}")
+        return values
+
+    arrays = {field: read(field) for field in ("motion", "transl", "pose_valid", "betas")}
+    motion = arrays["motion"]
+    if motion.ndim != 3 or motion.shape[1:] != (55, 3):
+        raise ValueError(f"motion at {label} must have shape [T,55,3]; got {motion.shape}")
+    frames = motion.shape[0]
+    if frames < 2 or frames % args.frame_chunk_size:
+        raise ValueError(f"motion at {label} has {frames} frames; need at least two and a multiple of frame_chunk_size={args.frame_chunk_size}")
+    if "fulllength" not in args.dataset_ratio and frames != args.pose_length:
+        raise ValueError(f"motion at {label} has {frames} frames; expected pose_length={args.pose_length}")
+    if settings.warmup_frames >= frames:
+        raise ValueError(f"warmup_frames excludes every frame at {label}")
+    if arrays["transl"].shape != (frames, 3):
+        raise ValueError(f"transl at {label} must have shape [{frames},3]; got {arrays['transl'].shape}")
+    pose_valid = arrays["pose_valid"]
+    if pose_valid.shape != (frames,) or not np.isin(pose_valid, (0, 1)).all():
+        raise ValueError(f"pose_valid at {label} must have shape [{frames}] with only boolean/0/1 values")
+    betas = arrays["betas"]
+    if not ((betas.ndim == 1 and betas.shape[0] > 0) or
+            (betas.ndim == 2 and betas.shape[0] == frames and betas.shape[1] > 0)):
+        raise ValueError(f"betas at {label} must be [C] or [{frames},C]; got {betas.shape}")
+    if settings.geometry and betas.shape[-1] < int(getattr(args, "smplx_num_betas", 300)):
+        raise ValueError(f"betas at {label} has too few coefficients for the geometry model")
+
+    finite_fields = ["motion", "transl"]
+    if "lower" in settings.parts:
+        if int(reference.lower_valid) != 1:
+            raise ValueError(f"Lower-body target marked invalid at {label}")
+        arrays["contacts"] = read("contacts")
+        if arrays["contacts"].shape != (frames, 4):
+            raise ValueError(f"contacts at {label} must have shape [{frames},4]; got {arrays['contacts'].shape}")
+        finite_fields.append("contacts")
+    if "face" in settings.parts or settings.geometry:
+        arrays["expressions"] = read("expressions")
+        expression_dim = int(getattr(args, "smplx_num_expression_coeffs", 100)) if settings.geometry else 100
+        if expression_dim != 100 or arrays["expressions"].shape != (frames, 100):
+            raise ValueError(f"expressions at {label} must have shape [{frames},100] matching the current face codec/geometry model")
+        finite_fields.append("expressions")
+    if settings.geometry:
+        finite_fields.append("betas")
+
+    def text(value):
+        return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+    start = float(group.attrs.get("chunk_startsec", 0.0))
+    end = float(group.attrs.get("chunk_endsec", 0.0))
+    if not np.isfinite([start, end]).all() or end < start:
+        raise ValueError(f"Invalid chunk time metadata at {label}: {start}, {end}")
+    identity = dict(split=dataset.loader_type, filechunk_id=reference.chunk_id,
+                    file_id=text(group.attrs.get("file_id", "")), dataset_name=reference.dataset_name,
+                    chunk_startsec=start, chunk_endsec=end, frames=frames)
+    # Complete all schema checks before allowing numerical corruption to skip.
+    nonfinite = [field for field in finite_fields if not np.isfinite(arrays[field]).all()]
+    valid_count = int(np.count_nonzero(pose_valid))
+    quality = dict(identity, valid_frames=valid_count, flagged_frames=frames - valid_count,
+                   valid_fraction=valid_count / frames, fully_valid=valid_count == frames,
+                   status="skipped" if nonfinite else "evaluated",
+                   reason="nonfinite_required_input" if nonfinite else "",
+                   nonfinite_fields=nonfinite)
+    return identity, torch.from_numpy(pose_valid.astype(np.bool_, copy=True)), quality
+
+
+def _direct_velocity_valid_mask(pose_valid, warmup_frames):
+    """Conservative validity for the production mixed finite-difference target."""
+    effective = pose_valid.clone().bool()
+    effective[:warmup_frames] = False
+    stencil = effective.clone()
+    stencil[0] &= effective[1]
+    stencil[-1] &= effective[-2]
+    if len(effective) > 2:
+        stencil[1:-1] &= effective[:-2] & effective[2:]
+    return stencil
+
+
+def _quality_summary(split, available, records):
+    evaluated = [record for record in records if record["status"] == "evaluated"]
+    evaluated_frames = sum(record["frames"] for record in evaluated)
+    valid_frames = sum(record["valid_frames"] for record in evaluated)
+    return dict(split=split, available_clips=available, selected_clips=len(records),
+                evaluated_clips=len(evaluated), skipped_clips=len(records) - len(evaluated),
+                fully_valid_clips=sum(record["fully_valid"] for record in evaluated),
+                flagged_clips=sum(not record["fully_valid"] for record in evaluated),
+                selected_fully_valid_clips=sum(record["fully_valid"] for record in records),
+                selected_flagged_clips=sum(not record["fully_valid"] for record in records),
+                selected_frames=sum(record["frames"] for record in records), evaluated_frames=evaluated_frames,
+                valid_frames=valid_frames, flagged_frames=evaluated_frames - valid_frames,
+                valid_fraction=valid_frames / evaluated_frames if evaluated_frames else None)
+
+
+def run_audit(settings: AuditSettings, progress: Callable[[dict], None] | None = None) -> dict:
+    """Audit finite clips intact, with three explicit metric quality scopes.
+
+    NaN/Inf in required raw inputs skips a whole clip, with its identity/reason
+    retained. Missing fields, invalid shapes/masks and model errors remain fatal.
+    ``progress`` receives split, completed, total, filechunk_id, status, reason
+    and elapsed_seconds for both evaluated and skipped clips.
     Metric records are long-form; counts are the metric helper's actual element
     denominators, so split RMSE is computed from pooled squared error, not a mean
-    of per-clip RMSE. Usage histograms include all valid tokens, including warmup.
+    of per-clip RMSE. A finite clip is encoded once per part; all_frames and
+    valid_frames reuse that reconstruction. fully_valid_clips reuses all_frames
+    statistics only if every original pose_valid flag was true. Usage includes
+    every token from evaluated clips once, including flagged/warmup frames.
     """
     import numpy as np
     import torch
@@ -412,7 +533,8 @@ def run_audit(settings: AuditSettings, progress: Callable[[dict], None] | None =
     if settings.geometry:
         from scripts.codec_reconstruction_metrics import SMPLXGeometryEvaluator
         geometry = SMPLXGeometryEvaluator(args, device=settings.device)
-    result = dict(summary_records=[], sample_records=[], codebook_records=[], code_usage_records=[], metadata=metadata)
+    result = dict(summary_records=[], sample_records=[], codebook_records=[], code_usage_records=[],
+                  quality_records=[], quality_summary_records=[], skipped_records=[], metadata=metadata)
     aggregates, sample_counts, histograms = {}, {}, {}
     sample_manifest, split_manifest = [], {}
     try:
@@ -425,50 +547,80 @@ def run_audit(settings: AuditSettings, progress: Callable[[dict], None] | None =
                 if settings.max_samples_per_split is not None:
                     random.Random(f"{settings.seed}:{split}").shuffle(indices)
                     indices = indices[:settings.max_samples_per_split]
-                split_manifest[split] = dict(available_samples=len(dataset), selected_ids=[dataset._chunk_refs[i].chunk_id for i in indices])
+                split_manifest[split] = dict(available_samples=len(dataset),
+                                            selected_ids=[dataset._chunk_refs[i].chunk_id for i in indices],
+                                            evaluated_ids=[], skipped_ids=[])
+                split_quality = []
                 for completed, index in enumerate(indices, 1):
                     reference = dataset._chunk_refs[index]
-                    if not dataset._chunk_is_valid(index):
-                        raise ValueError(f"Invalid pose_valid/motion at {split}:{reference.chunk_id}; audit refuses replacement")
+                    identity, pose_valid, quality = _read_sample_quality(dataset, index, settings, args)
+                    sample_manifest.append(identity)
+                    result["quality_records"].append(quality)
+                    split_quality.append(quality)
+                    if quality["status"] == "skipped":
+                        result["skipped_records"].append(dict(quality))
+                        split_manifest[split]["skipped_ids"].append(reference.chunk_id)
+                        if progress:
+                            progress(dict(split=split, completed=completed, total=len(indices), filechunk_id=reference.chunk_id,
+                                          status="skipped", reason=quality["reason"], nonfinite_fields=quality["nonfinite_fields"],
+                                          elapsed_seconds=time.perf_counter() - started))
+                        continue
                     sample = dataset[index]
                     if sample["filechunk_id"] != reference.chunk_id:
                         raise ValueError(f"Dataset substituted requested sample {reference.chunk_id}")
                     prepared = prepare_codec_inputs(sample, args, repository_root=root, device=settings.device, parts=settings.parts)
-                    frames = prepared["translation"].shape[1]
-                    if settings.warmup_frames >= frames:
-                        raise ValueError(f"warmup_frames excludes every frame of {reference.chunk_id}")
-                    identity = dict(split=split, filechunk_id=reference.chunk_id, file_id=sample["file_id"],
-                                    dataset_name=sample["dataset_name"], chunk_startsec=float(sample["chunk_startsec"]),
-                                    chunk_endsec=float(sample["chunk_endsec"]), frames=frames)
-                    sample_manifest.append(identity)
+                    if prepared["translation"].shape[1] != identity["frames"]:
+                        raise ValueError(f"Dataset changed frame count for {reference.chunk_id}")
+                    velocity_valid = _direct_velocity_valid_mask(pose_valid, settings.warmup_frames)
+                    velocity_all = _direct_velocity_valid_mask(torch.ones_like(pose_valid), settings.warmup_frames)
                     for part, codec in codecs.items():
-                        if part == "lower" and not bool(sample["lower_valid_mask"]):
-                            raise ValueError(f"Lower-body target marked invalid: {reference.chunk_id}")
                         decoded, codes = reconstruct_codec(codec, prepared["inputs"][part], mode=settings.mode)
                         kwargs = _metric_kwargs(part, prepared, decoded, args, rc, kinematics)
-                        stats = reconstruction_metrics(**kwargs, warmup_frames=settings.warmup_frames, fps=args.motion_fps)
-                        if geometry is not None:
-                            geometry_stats = geometry.evaluate(**_geometry_kwargs(part, sample, prepared, kwargs, dataset, rc),
-                                                               warmup_frames=settings.warmup_frames, fps=args.motion_fps)
-                            if set(stats) & set(geometry_stats):
-                                raise ValueError("Geometry and core metric names collide")
-                            stats.update(geometry_stats)
-                        key = (split, part)
-                        merge_metric_sums(aggregates.setdefault(key, {}), stats)
-                        sample_counts[key] = sample_counts.get(key, 0) + 1
-                        values = finalize_metrics(stats)
-                        for metric, value in values.items():
-                            result["sample_records"].append(dict(identity, part=part, mode=settings.mode,
-                                metric=metric, value=value, count=stats[metric]["count"], reduction=stats[metric]["reduction"]))
+                        geometry_kwargs = _geometry_kwargs(part, sample, prepared, kwargs, dataset, rc) if geometry is not None else None
+
+                        def measure(valid_mask=None, direct_velocity_mask=None):
+                            stats = reconstruction_metrics(**kwargs, valid_mask=valid_mask,
+                                translation_velocity_valid_mask=direct_velocity_mask,
+                                warmup_frames=settings.warmup_frames, fps=args.motion_fps)
+                            if geometry is not None:
+                                geometry_stats = geometry.evaluate(**geometry_kwargs, valid_mask=valid_mask,
+                                    warmup_frames=settings.warmup_frames, fps=args.motion_fps)
+                                if set(stats) & set(geometry_stats):
+                                    raise ValueError("Geometry and core metric names collide")
+                                stats.update(geometry_stats)
+                            return stats
+
+                        all_stats = measure(direct_velocity_mask=velocity_all if part == "lower" else None)
+                        # Fully valid clips have identical effective masks and
+                        # velocity stencils, including warmup exclusions.
+                        valid_stats = all_stats if quality["fully_valid"] else measure(
+                            pose_valid, velocity_valid if part == "lower" else None)
+                        # SMPL-X can return no keys when the complete mask is false.
+                        for metric, template in all_stats.items():
+                            valid_stats.setdefault(metric, dict(sum=0.0, count=0, reduction=template["reduction"]))
+                        scoped_stats = dict(all_frames=all_stats, valid_frames=valid_stats)
+                        if quality["fully_valid"]:
+                            scoped_stats["fully_valid_clips"] = all_stats
+                        for scope, stats in scoped_stats.items():
+                            key = (split, part, scope)
+                            merge_metric_sums(aggregates.setdefault(key, {}), stats)
+                            sample_counts[key] = sample_counts.get(key, 0) + 1
+                            for metric, value in finalize_metrics(stats).items():
+                                result["sample_records"].append(dict(identity, part=part, mode=settings.mode,
+                                    metric_scope=scope, metric=metric, value=value, count=stats[metric]["count"],
+                                    reduction=stats[metric]["reduction"]))
                         ids = codes.detach().cpu().numpy()[0]
                         if ids.shape[0] != codec.num_codebooks or ids.min() < 0 or ids.max() >= codec.cardinality:
                             raise ValueError(f"Invalid {part} codec token IDs or stage count")
-                        counts = histograms.setdefault(key, np.zeros((codec.num_codebooks, codec.cardinality), dtype=np.int64))
+                        counts = histograms.setdefault((split, part), np.zeros((codec.num_codebooks, codec.cardinality), dtype=np.int64))
                         for stage, stage_ids in enumerate(ids):
                             counts[stage] += np.bincount(stage_ids, minlength=codec.cardinality)
+                    split_manifest[split]["evaluated_ids"].append(reference.chunk_id)
                     if progress:
                         progress(dict(split=split, completed=completed, total=len(indices), filechunk_id=reference.chunk_id,
+                                      status="evaluated", reason="", nonfinite_fields=[],
                                       elapsed_seconds=time.perf_counter() - started))
+                result["quality_summary_records"].append(_quality_summary(split, len(dataset), split_quality))
             finally:
                 dataset.close()
     finally:
@@ -477,10 +629,11 @@ def run_audit(settings: AuditSettings, progress: Callable[[dict], None] | None =
             metadata["models"][part]["state_sha256_after"] = after
             if after != before[part]:
                 raise RuntimeError(f"Frozen {part} codec parameters/buffers changed during audit")
-    for (split, part), stats in aggregates.items():
+    for (split, part, scope), stats in aggregates.items():
         for metric, value in finalize_metrics(stats).items():
             result["summary_records"].append(dict(split=split, part=part, metric=metric, value=value,
-                count=stats[metric]["count"], reduction=stats[metric]["reduction"], n_samples=sample_counts[(split, part)], mode=settings.mode))
+                metric_scope=scope, count=stats[metric]["count"], reduction=stats[metric]["reduction"],
+                n_samples=sample_counts[(split, part, scope)], mode=settings.mode))
     for (split, part), all_counts in histograms.items():
         train_counts = histograms.get(("train", part))
         for stage, counts in enumerate(all_counts):
@@ -488,11 +641,21 @@ def run_audit(settings: AuditSettings, progress: Callable[[dict], None] | None =
             probabilities = counts[counts > 0] / total
             entropy = float(-(probabilities * np.log(probabilities)).sum())
             unseen = None if train_counts is None else float(counts[train_counts[stage] == 0].sum() / total)
-            result["codebook_records"].append(dict(split=split, part=part, stage=stage + 1, codebook_size=len(counts),
+            result["codebook_records"].append(dict(split=split, part=part, stage=stage + 1, usage_scope=USAGE_SCOPE, codebook_size=len(counts),
                 token_count=total, active_codes=int((counts > 0).sum()), active_fraction=float((counts > 0).mean()),
                 entropy_nats=entropy, perplexity=float(np.exp(entropy)), unseen_train_mass=unseen))
             for code in np.flatnonzero(counts):
-                result["code_usage_records"].append(dict(split=split, part=part, stage=stage + 1, code=int(code), count=int(counts[code])))
+                result["code_usage_records"].append(dict(split=split, part=part, stage=stage + 1, usage_scope=USAGE_SCOPE, code=int(code), count=int(counts[code])))
+    support = []
+    for split in settings.splits:
+        for part in settings.parts:
+            for scope in METRIC_SCOPES:
+                stats = aggregates.get((split, part, scope), {})
+                supported = [metric for metric, value in stats.items() if value["count"] > 0]
+                support.append(dict(split=split, part=part, metric_scope=scope,
+                                    n_samples=sample_counts.get((split, part, scope), 0),
+                                    metrics_with_support=supported,
+                                    unsupported_metrics=[metric for metric, value in stats.items() if value["count"] == 0]))
     duplicates = {}
     for item in sample_manifest:
         duplicates.setdefault((item["dataset_name"], item["filechunk_id"]), set()).add(item["split"])
@@ -500,11 +663,24 @@ def run_audit(settings: AuditSettings, progress: Callable[[dict], None] | None =
                     split_manifest=split_manifest, sample_manifest=sample_manifest,
                     cross_split_duplicate_ids=[dict(dataset_name=key[0], filechunk_id=key[1], splits=sorted(value)) for key, value in duplicates.items() if len(value) > 1],
                     cross_split_source_overlaps=_overlaps(sample_manifest),
-                    state_unchanged=True, usage_includes_warmup=True, invalid_policy="fail_without_substitution",
+                    state_unchanged=True, usage_includes_warmup=True, usage_scope=USAGE_SCOPE,
+                    invalid_policy="skip_nonfinite_required_inputs_only; finite_pose_flags_are_metric_masks",
+                    result_schema_version=2, quality_schema_version=2, metric_scopes=list(METRIC_SCOPES),
+                    quality_summary_records=result["quality_summary_records"],
+                    scope_support_records=support, no_support_scopes=[item for item in support if not item["metrics_with_support"]],
+                    quality_policy={"encoding": "Encode every finite evaluated clip intact once per part; no frame removal or replacement.",
+                                    "all_frames": "All evaluated frames after warmup, including finite pose_valid=False frames.",
+                                    "valid_frames": "Only pose_valid=True frames after warmup; temporal differences require valid source-frame support.",
+                                    "fully_valid_clips": "Reuse all_frames metrics only for clips with every original pose_valid flag true, before warmup exclusion.",
+                                    "nonfinite": "Skip a whole clip only for NaN/Inf in required raw codec/geometry inputs; preserve selected identity and reason.",
+                                    "schema_errors": "Missing fields, malformed shapes/flags, read failures and model failures are fatal.",
+                                    "quality_summary_denominators": "fully_valid_clips/flagged_clips and valid_frames/flagged_frames/valid_fraction refer to evaluated clips before warmup; selected_* includes skipped clips.",
+                                    "usage": "All tokens of evaluated clips counted once, including flagged and warmup frames; no validity filtering."},
                     translation_integration="production velocity2position_mixeddiff in successive frame_chunk_size blocks with carried final_pos",
                     index_cache_mode="off", padding_or_truncation=False,
                     notes=["Usage entropy/perplexity describe frozen codec assignments, not gesture-model predictive uncertainty.",
                            "A sampled training subset may understate training support; unseen_train_mass uses only evaluated training samples.",
+                           "Quality flags do not remove encoder context: valid-frame predictions can depend on finite flagged neighboring frames.",
                            "Source overlap checks cover selected samples only and depend on source file/time metadata.",
                            "Translation position metrics include production velocity integration effects; direct velocity RMSE isolates velocity reconstruction."])
     return result
