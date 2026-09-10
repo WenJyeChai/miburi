@@ -133,7 +133,10 @@ class BaseCausalCodecTrainer(object):
                 only_motion=True,
                 dataset_ratio=args.dataset_ratio, 
                 debug=args.debug,
-                varying_frame_length=args.varying_frame_length
+                varying_frame_length=(False if getattr(args, "codec_standard_eval", False)
+                                      else args.varying_frame_length),
+                **({"runtime_quality_max_resample_attempts": 1}
+                   if getattr(args, "codec_standard_eval", False) else {}),
             )
 
             if args.ddp:
@@ -183,7 +186,9 @@ class BaseCausalCodecTrainer(object):
             )
             logger.info(f"[GPU{self.global_rank}:{self.local_rank}] Init val dataloader success")
 
-        if self.local_rank == 0:
+        if self.local_rank == 0 and not (
+            args.is_train and getattr(args, "codec_standard_eval", False)
+        ):
             self.test_data = dataset_class(
                 args, 
                 "test", 

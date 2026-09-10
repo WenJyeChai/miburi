@@ -1,0 +1,80 @@
+# Scott-only upper/hands codec, initialized from scratch.
+# Architecture: deployed upper codec; recipe: demoexp_release_uppercodec/config.yaml.
+# RVQ settings come from loaders.get_uppergesturecodec_kwargs():
+# 8 stages, 2048 entries/stage, code width 128, latent width 256.
+project_name: codec_scott_scratch_upper
+name: codec_scott_scratch_upper
+out_path: ./experiments/
+is_train: True
+is_continue: False
+continue_ckpt: null
+ddp: False
+random_seed: 2342
+
+wandb: False
+wandb_project: miburi_single
+wandb_group: codec-scott-scratch
+wandb_name: codec-scott-scratch-upper
+wandb_tags: [codec, scott, scratch, upper, rvq, float32]
+
+trainer: UpperBodyCausalCodec
+dataset: unified
+dataset_ratio: scott_beatx_lowervalid
+body_part: upper
+beatx_data_path: datasets/beat_english_v2.0.0/
+beatx_cache_path: datasets/data_cache/beatx_gtdm3/database.hdf5
+embody3d_cache_path: null
+deps_path: assets_dep/
+pose_rep: smplxflame_30
+pose_norm: False
+rot6d: True
+align_first_frame_yaw: False  # The selected HDF5 is already aligned.
+
+nfeats: 258  # 13 upper-body + 30 hand joints, each represented in 6D.
+motion_fps: 25
+pose_length: 250
+frame_chunk_size: 2
+transformer_layers: 8
+transformer_heads: 4
+convblock_layers: 2
+use_wavelet: False
+latent_dtype: float32
+param_dtype: float32
+optim_dtype: float32
+
+batch_size: 32
+loader_workers: 8
+smplx_chunk_per_batch_multiplier: 128
+varying_frame_length: True
+epochs: 2000
+opt: adamw
+opt_betas: [0.9, 0.95]
+weight_decay: 0.0
+grad_norm: 1.0
+lr_base: 0.0001
+lr_policy: step
+decay_epochs: 50
+decay_rate: 0.9
+warmup_epochs: 0
+
+rec_weight: 1.0
+rec_pos_weight: 1.0
+rec_aa_weight: 1.0
+rec_6d_weight: 1.0
+rec_ver_weight: 1.0
+rec_loc_weight: 10.0
+rec_face_weight: 0.0
+rec_trans_weight: 0.0
+rec_contact_weight: 0.0
+globalorient_weight: 2.0
+lap_weight: 2.0
+mmd_weight: 0.01
+accel_penalty_weight: 0.5
+comloss_weight: 0.25
+kl_warmup_epochs: 25
+
+# Use the same validation/checkpoint cadence for all three Scott codecs.
+codec_standard_eval: True
+codec_eval_fgd: False
+test_period: 10
+log_period: 50

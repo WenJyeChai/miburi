@@ -60,6 +60,12 @@ def parse_args():
     parser.add("--smplx_fast_parity_check_steps", default=0, type=int)
     parser.add("--smplx_fast_parity_tol", default=1e-5, type=float)
     parser.add("--mpjpe_eval_enabled", default=True, type=str2bool)
+    parser.add("--codec_standard_eval", default=False, type=str2bool,
+               help="Validate causal codecs on complete clips with deterministic "
+                    "streaming reconstruction and save the best reconstruction checkpoint.")
+    parser.add("--codec_eval_fgd", default=False, type=str2bool,
+               help="Also compute part-isolated reconstruction FGD during standard "
+                    "codec validation when the BEATX evaluator weights are available.")
     # GTDM3 per-bodypart loss reweighting. Applied to per-codebook CE loss for
     # the face codebooks (k >= 16) in UpperFaceLowerGTDM3Trainer. Default 1.0
     # is a no-op; set > 1 in a config to upweight the face codebook losses.

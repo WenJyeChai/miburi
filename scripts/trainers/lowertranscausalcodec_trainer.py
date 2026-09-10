@@ -542,6 +542,9 @@ class LowerBodyCausalCodecTrainer(BaseCausalCodecTrainer):
             self.opt_s.step(epoch)
                     
     def val(self, epoch):
+        if getattr(self.args, "codec_standard_eval", False):
+            from .utils.codec_reconstruction_validation import run_standard_codec_validation
+            return run_standard_codec_validation(self, "lower", epoch)
         self.model.eval()
         # self.vq0_codec.eval()
         # self.visualize_codebook(self.checkpoint_path, epoch)

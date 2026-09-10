@@ -4,6 +4,14 @@ import sys
 import time
 import warnings
 import os
+from pathlib import Path
+
+# Direct script execution adds scripts/, while shared audit helpers are
+# imported through the repository's scripts namespace package.
+_REPOSITORY_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPOSITORY_ROOT not in sys.path:
+    sys.path.insert(0, _REPOSITORY_ROOT)
+
 import torch
 import torch.multiprocessing as mp
 import torch.distributed as dist
@@ -106,7 +114,10 @@ def main_worker(args):
                     trainer.wandb_logger.log_checkpoint(epoch=epoch, path=debug_checkpoint)
                 # trainer.test(epoch)
 
-            if epoch % args.test_period == 0:
+            validation_due = epoch % args.test_period == 0 or (
+                getattr(args, "codec_standard_eval", False) and epoch == args.epochs
+            )
+            if validation_due:
                 if global_rank == 0:
                     logger.info(f"[GPU {global_rank}] Saving checkpoints:")
                     checkpoint_path = os.path.join(trainer.checkpoint_path, f"last_{epoch}.safetensors")
@@ -116,7 +127,7 @@ def main_worker(args):
                     other_tools.update_args_file(args, rank=global_rank)
                     trainer.wandb_logger.log_checkpoint(epoch=epoch, path=checkpoint_path)
 
-            if epoch % args.test_period == 0 and epoch != 0 and not args.debug:
+            if validation_due and epoch != 0 and not args.debug:
                 logger.info(f"GPU {global_rank} Validation:")
                 trainer.val(epoch)
 
