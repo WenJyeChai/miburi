@@ -257,6 +257,12 @@ python scripts/train.py --config configs/mimi_causalrvq_faceexp_25_smplxbeatx_fc
 
 The three codecs must be trained first because the Gesture LM (next step) is conditioned on a frozen copy of their RVQ codebooks.
 
+Before adapting a codec to one speaker, use the
+[codec reconstruction notebook](scripts/codec_reconstruction_audit.ipynb) to
+measure the current checkpoints on train/validation motion and inspect RVQ
+code usage. The [audit guide](docs/codec_reconstruction_audit.md) explains setup,
+metric definitions and the saved result tables.
+
 #### Gesture LM (GTDM3) training
 
 After all three codecs are trained, point the LM training at their checkpoints. The codec paths are set inside the GTDM3 config (`upperbodycodec_ckpt`, `lowerbodycodec_ckpt`, `facecodec_ckpt`):

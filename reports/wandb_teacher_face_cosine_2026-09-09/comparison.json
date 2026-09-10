@@ -1,0 +1,994 @@
+{
+  "runs": {
+    "8hir7gzc": {
+      "name": "teacher-c-supervised-rvq-scott-bs64",
+      "state": "finished",
+      "validation_count": 95,
+      "metrics": {
+        "val/ce_loss": {
+          "best_epoch": 220,
+          "best_value": 5.962051868438721,
+          "tied_best_epochs": [
+            220
+          ],
+          "last_epoch": 1900,
+          "last_value": 10.168251991271973,
+          "last_change_from_best_percent": 70.54953924670781
+        },
+        "val/ce_upper": {
+          "best_epoch": 280,
+          "best_value": 2.612321302294731,
+          "tied_best_epochs": [
+            280
+          ],
+          "last_epoch": 1900,
+          "last_value": 3.536852389574051,
+          "last_change_from_best_percent": 35.39117054503165
+        },
+        "val/ce_lower": {
+          "best_epoch": 340,
+          "best_value": 1.8628036603331566,
+          "tied_best_epochs": [
+            340
+          ],
+          "last_epoch": 1900,
+          "last_value": 3.6432686001062393,
+          "last_change_from_best_percent": 95.57984975478587
+        },
+        "val/ce_face": {
+          "best_epoch": 140,
+          "best_value": 1.3508128821849823,
+          "tied_best_epochs": [
+            140
+          ],
+          "last_epoch": 1900,
+          "last_value": 2.988130509853363,
+          "last_change_from_best_percent": 121.20980257605835
+        },
+        "val/temporal_q0_ce": {
+          "best_epoch": 880,
+          "best_value": 3.78125,
+          "tied_best_epochs": [
+            880,
+            900,
+            920,
+            940,
+            960,
+            980
+          ],
+          "last_epoch": 1900,
+          "last_value": 4.96875,
+          "last_change_from_best_percent": 31.404958677685958
+        },
+        "val/temporal_q0_acc": {
+          "best_epoch": 900,
+          "best_value": 0.25155556201934814,
+          "tied_best_epochs": [
+            900
+          ],
+          "last_epoch": 1900,
+          "last_value": 0.16103702783584595,
+          "last_change_from_best_percent": -35.983515314417915
+        },
+        "derived/depth_mean_ce": {
+          "best_epoch": 220,
+          "best_value": 6.017620387830232,
+          "tied_best_epochs": [
+            220
+          ],
+          "last_epoch": 1900,
+          "last_value": 10.441909990812603,
+          "last_change_from_best_percent": 73.5222449712823
+        }
+      },
+      "best_through_980": {
+        "val/ce_loss": {
+          "best_epoch": 220,
+          "best_value": 5.962051868438721,
+          "tied_best_epochs": [
+            220
+          ],
+          "last_epoch": 980,
+          "last_value": 7.798430919647217,
+          "last_change_from_best_percent": 30.801125044378175
+        },
+        "val/ce_upper": {
+          "best_epoch": 280,
+          "best_value": 2.612321302294731,
+          "tied_best_epochs": [
+            280
+          ],
+          "last_epoch": 980,
+          "last_value": 2.7716272324323654,
+          "last_change_from_best_percent": 6.0982517731527075
+        },
+        "val/ce_lower": {
+          "best_epoch": 340,
+          "best_value": 1.8628036603331566,
+          "tied_best_epochs": [
+            340
+          ],
+          "last_epoch": 980,
+          "last_value": 2.6228522658348083,
+          "last_change_from_best_percent": 40.801326607105736
+        },
+        "val/ce_face": {
+          "best_epoch": 140,
+          "best_value": 1.3508128821849823,
+          "tied_best_epochs": [
+            140
+          ],
+          "last_epoch": 980,
+          "last_value": 2.40395188331604,
+          "last_change_from_best_percent": 77.96335192092425
+        },
+        "val/temporal_q0_ce": {
+          "best_epoch": 880,
+          "best_value": 3.78125,
+          "tied_best_epochs": [
+            880,
+            900,
+            920,
+            940,
+            960,
+            980
+          ],
+          "last_epoch": 980,
+          "last_value": 3.78125,
+          "last_change_from_best_percent": 0.0
+        },
+        "val/temporal_q0_acc": {
+          "best_epoch": 900,
+          "best_value": 0.25155556201934814,
+          "tied_best_epochs": [
+            900
+          ],
+          "last_epoch": 980,
+          "last_value": 0.2481481432914734,
+          "last_change_from_best_percent": -1.3545392121414035
+        },
+        "derived/depth_mean_ce": {
+          "best_epoch": 220,
+          "best_value": 6.017620387830232,
+          "tied_best_epochs": [
+            220
+          ],
+          "last_epoch": 980,
+          "last_value": 8.009861494365492,
+          "last_change_from_best_percent": 33.106792687758755
+        }
+      },
+      "last_logged_training_epoch": 1913,
+      "final_lr": 9.273054202525034e-05,
+      "trainable_parameters": 320812552,
+      "train_samples": 477,
+      "val_samples": 54,
+      "test_samples": 89,
+      "eval_metrics": [],
+      "nonfinite_metric_count": 0
+    },
+    "2ww4lkuq": {
+      "name": "teacher-c-shareddepth-supervised-rvq-scott-bs64",
+      "state": "finished",
+      "validation_count": 71,
+      "metrics": {
+        "val/ce_loss": {
+          "best_epoch": 280,
+          "best_value": 6.144205570220947,
+          "tied_best_epochs": [
+            280
+          ],
+          "last_epoch": 1420,
+          "last_value": 10.055438041687012,
+          "last_change_from_best_percent": 63.65725278500758
+        },
+        "val/ce_upper": {
+          "best_epoch": 440,
+          "best_value": 2.578328415751457,
+          "tied_best_epochs": [
+            440
+          ],
+          "last_epoch": 1420,
+          "last_value": 3.078741043806076,
+          "last_change_from_best_percent": 19.408413024404148
+        },
+        "val/ce_lower": {
+          "best_epoch": 500,
+          "best_value": 1.969266951084137,
+          "tied_best_epochs": [
+            500
+          ],
+          "last_epoch": 1420,
+          "last_value": 3.4891302436590195,
+          "last_change_from_best_percent": 77.17913976762544
+        },
+        "val/ce_face": {
+          "best_epoch": 180,
+          "best_value": 1.3749406337738037,
+          "tied_best_epochs": [
+            180
+          ],
+          "last_epoch": 1420,
+          "last_value": 3.4875669479370117,
+          "last_change_from_best_percent": 153.65218412119194
+        },
+        "val/temporal_q0_ce": {
+          "best_epoch": 800,
+          "best_value": 3.765625,
+          "tied_best_epochs": [
+            800
+          ],
+          "last_epoch": 1420,
+          "last_value": 4.25,
+          "last_change_from_best_percent": 12.863070539419086
+        },
+        "val/temporal_q0_acc": {
+          "best_epoch": 800,
+          "best_value": 0.24785184860229492,
+          "tied_best_epochs": [
+            800
+          ],
+          "last_epoch": 1420,
+          "last_value": 0.19911110401153564,
+          "last_change_from_best_percent": -19.66527377771108
+        },
+        "derived/depth_mean_ce": {
+          "best_epoch": 280,
+          "best_value": 6.232387442337839,
+          "tied_best_epochs": [
+            280
+          ],
+          "last_epoch": 1420,
+          "last_value": 10.360987412302118,
+          "last_change_from_best_percent": 66.24427650177655
+        }
+      },
+      "best_through_980": {
+        "val/ce_loss": {
+          "best_epoch": 280,
+          "best_value": 6.144205570220947,
+          "tied_best_epochs": [
+            280
+          ],
+          "last_epoch": 980,
+          "last_value": 8.194584846496582,
+          "last_change_from_best_percent": 33.37094198496848
+        },
+        "val/ce_upper": {
+          "best_epoch": 440,
+          "best_value": 2.578328415751457,
+          "tied_best_epochs": [
+            440
+          ],
+          "last_epoch": 980,
+          "last_value": 2.705972656607628,
+          "last_change_from_best_percent": 4.950658732082758
+        },
+        "val/ce_lower": {
+          "best_epoch": 500,
+          "best_value": 1.969266951084137,
+          "tied_best_epochs": [
+            500
+          ],
+          "last_epoch": 980,
+          "last_value": 2.528704270720482,
+          "last_change_from_best_percent": 28.40840442319712
+        },
+        "val/ce_face": {
+          "best_epoch": 180,
+          "best_value": 1.3749406337738037,
+          "tied_best_epochs": [
+            180
+          ],
+          "last_epoch": 980,
+          "last_value": 2.9599079489707947,
+          "last_change_from_best_percent": 115.27532725880145
+        },
+        "val/temporal_q0_ce": {
+          "best_epoch": 800,
+          "best_value": 3.765625,
+          "tied_best_epochs": [
+            800
+          ],
+          "last_epoch": 980,
+          "last_value": 3.828125,
+          "last_change_from_best_percent": 1.6597510373443924
+        },
+        "val/temporal_q0_acc": {
+          "best_epoch": 800,
+          "best_value": 0.24785184860229492,
+          "tied_best_epochs": [
+            800
+          ],
+          "last_epoch": 980,
+          "last_value": 0.2374814748764038,
+          "last_change_from_best_percent": -4.184101827108622
+        },
+        "derived/depth_mean_ce": {
+          "best_epoch": 280,
+          "best_value": 6.232387442337839,
+          "tied_best_epochs": [
+            280
+          ],
+          "last_epoch": 980,
+          "last_value": 8.424398522627982,
+          "last_change_from_best_percent": 35.171290305210775
+        }
+      },
+      "last_logged_training_epoch": 1424,
+      "final_lr": 9.62441724908056e-05,
+      "trainable_parameters": 255342088,
+      "train_samples": 477,
+      "val_samples": 54,
+      "test_samples": 89,
+      "eval_metrics": [],
+      "nonfinite_metric_count": 0
+    },
+    "lqd1cmjh": {
+      "name": "teacher-c-face1-cos800-supervised-rvq-scott-bs64",
+      "state": "finished",
+      "validation_count": 50,
+      "metrics": {
+        "val/ce_loss": {
+          "best_epoch": 300,
+          "best_value": 5.827263355255127,
+          "tied_best_epochs": [
+            300
+          ],
+          "last_epoch": 1000,
+          "last_value": 6.73590087890625,
+          "last_change_from_best_percent": 15.592868697648576
+        },
+        "val/ce_upper": {
+          "best_epoch": 300,
+          "best_value": 2.582304745912552,
+          "tied_best_epochs": [
+            300
+          ],
+          "last_epoch": 1000,
+          "last_value": 2.716331496834755,
+          "last_change_from_best_percent": 5.1901988382413
+        },
+        "val/ce_lower": {
+          "best_epoch": 280,
+          "best_value": 1.8523557856678963,
+          "tied_best_epochs": [
+            280
+          ],
+          "last_epoch": 1000,
+          "last_value": 2.2228094041347504,
+          "last_change_from_best_percent": 19.99905316965236
+        },
+        "val/ce_face": {
+          "best_epoch": 220,
+          "best_value": 1.3720102310180664,
+          "tied_best_epochs": [
+            220
+          ],
+          "last_epoch": 1000,
+          "last_value": 1.7967599630355835,
+          "last_change_from_best_percent": 30.958204422596914
+        },
+        "val/temporal_q0_ce": {
+          "best_epoch": 780,
+          "best_value": 3.90625,
+          "tied_best_epochs": [
+            780,
+            800,
+            820,
+            840,
+            860,
+            880,
+            900,
+            920,
+            940,
+            960,
+            980,
+            1000
+          ],
+          "last_epoch": 1000,
+          "last_value": 3.90625,
+          "last_change_from_best_percent": 0.0
+        },
+        "val/temporal_q0_acc": {
+          "best_epoch": 940,
+          "best_value": 0.2428148090839386,
+          "tied_best_epochs": [
+            940
+          ],
+          "last_epoch": 1000,
+          "last_value": 0.2414814829826355,
+          "last_change_from_best_percent": -0.5491123487621263
+        },
+        "derived/depth_mean_ce": {
+          "best_epoch": 260,
+          "best_value": 5.8944642920243115,
+          "tied_best_epochs": [
+            260
+          ],
+          "last_epoch": 1000,
+          "last_value": 6.884829872532895,
+          "last_change_from_best_percent": 16.80162151204525
+        }
+      },
+      "best_through_980": {
+        "val/ce_loss": {
+          "best_epoch": 300,
+          "best_value": 5.827263355255127,
+          "tied_best_epochs": [
+            300
+          ],
+          "last_epoch": 980,
+          "last_value": 6.7341227531433105,
+          "last_change_from_best_percent": 15.562354789926601
+        },
+        "val/ce_upper": {
+          "best_epoch": 300,
+          "best_value": 2.582304745912552,
+          "tied_best_epochs": [
+            300
+          ],
+          "last_epoch": 980,
+          "last_value": 2.7162531465291977,
+          "last_change_from_best_percent": 5.187164715112291
+        },
+        "val/ce_lower": {
+          "best_epoch": 280,
+          "best_value": 1.8523557856678963,
+          "tied_best_epochs": [
+            280
+          ],
+          "last_epoch": 980,
+          "last_value": 2.2216917872428894,
+          "last_change_from_best_percent": 19.93871827608016
+        },
+        "val/ce_face": {
+          "best_epoch": 220,
+          "best_value": 1.3720102310180664,
+          "tied_best_epochs": [
+            220
+          ],
+          "last_epoch": 980,
+          "last_value": 1.7961782217025757,
+          "last_change_from_best_percent": 30.915803766985462
+        },
+        "val/temporal_q0_ce": {
+          "best_epoch": 780,
+          "best_value": 3.90625,
+          "tied_best_epochs": [
+            780,
+            800,
+            820,
+            840,
+            860,
+            880,
+            900,
+            920,
+            940,
+            960,
+            980
+          ],
+          "last_epoch": 980,
+          "last_value": 3.90625,
+          "last_change_from_best_percent": 0.0
+        },
+        "val/temporal_q0_acc": {
+          "best_epoch": 940,
+          "best_value": 0.2428148090839386,
+          "tied_best_epochs": [
+            940
+          ],
+          "last_epoch": 980,
+          "last_value": 0.2419259250164032,
+          "last_change_from_best_percent": -0.3660748991747509
+        },
+        "derived/depth_mean_ce": {
+          "best_epoch": 260,
+          "best_value": 5.8944642920243115,
+          "tied_best_epochs": [
+            260
+          ],
+          "last_epoch": 980,
+          "last_value": 6.882958161203485,
+          "last_change_from_best_percent": 16.76986779810823
+        }
+      },
+      "last_logged_training_epoch": 999,
+      "final_lr": 1e-06,
+      "trainable_parameters": 320812552,
+      "train_samples": 477,
+      "val_samples": 54,
+      "test_samples": 89,
+      "eval_metrics": [],
+      "nonfinite_metric_count": 0
+    }
+  },
+  "comparisons_at_980": {
+    "8hir7gzc": {
+      "val/ce_loss": {
+        "baseline": 7.798430919647217,
+        "new": 6.7341227531433105,
+        "delta": -1.0643081665039062,
+        "change_percent": -13.647721925990375
+      },
+      "val/ce_upper": {
+        "baseline": 2.7716272324323654,
+        "new": 2.7162531465291977,
+        "delta": -0.055374085903167725,
+        "change_percent": -1.9978908150130925
+      },
+      "val/ce_lower": {
+        "baseline": 2.6228522658348083,
+        "new": 2.2216917872428894,
+        "delta": -0.40116047859191895,
+        "change_percent": -15.294817928459903
+      },
+      "val/ce_face": {
+        "baseline": 2.40395188331604,
+        "new": 1.7961782217025757,
+        "delta": -0.6077736616134644,
+        "change_percent": -25.2822723213201
+      },
+      "val/temporal_q0_ce": {
+        "baseline": 3.78125,
+        "new": 3.90625,
+        "delta": 0.125,
+        "change_percent": 3.305785123966931
+      },
+      "val/temporal_q0_acc": {
+        "baseline": 0.2481481432914734,
+        "new": 0.2419259250164032,
+        "delta": -0.00622221827507019,
+        "change_percent": -2.5074611449990236
+      },
+      "derived/depth_mean_ce": {
+        "baseline": 8.009861494365492,
+        "new": 6.882958161203485,
+        "delta": -1.1269033331620069,
+        "change_percent": -14.068949056793588
+      },
+      "best_total_ce_change_percent": -2.2607739106921043,
+      "body_fraction_of_matched_gain": {
+        "upper": 0.052028244869212405,
+        "lower": 0.3769213571945721,
+        "face": 0.5710504539393982
+      }
+    },
+    "2ww4lkuq": {
+      "val/ce_loss": {
+        "baseline": 8.194584846496582,
+        "new": 6.7341227531433105,
+        "delta": -1.4604620933532715,
+        "change_percent": -17.822282894265975
+      },
+      "val/ce_upper": {
+        "baseline": 2.705972656607628,
+        "new": 2.7162531465291977,
+        "delta": 0.010280489921569824,
+        "change_percent": 0.3799184702205416
+      },
+      "val/ce_lower": {
+        "baseline": 2.528704270720482,
+        "new": 2.2216917872428894,
+        "delta": -0.30701248347759247,
+        "change_percent": -12.141098784561233
+      },
+      "val/ce_face": {
+        "baseline": 2.9599079489707947,
+        "new": 1.7961782217025757,
+        "delta": -1.163729727268219,
+        "change_percent": -39.31641616330892
+      },
+      "val/temporal_q0_ce": {
+        "baseline": 3.828125,
+        "new": 3.90625,
+        "delta": 0.078125,
+        "change_percent": 2.0408163265306145
+      },
+      "val/temporal_q0_acc": {
+        "baseline": 0.2374814748764038,
+        "new": 0.2419259250164032,
+        "delta": 0.00444445013999939,
+        "change_percent": 1.8714934048276843
+      },
+      "derived/depth_mean_ce": {
+        "baseline": 8.424398522627982,
+        "new": 6.882958161203485,
+        "delta": -1.5414403614244971,
+        "change_percent": -18.297334311573454
+      },
+      "best_total_ce_change_percent": -5.158392103642184,
+      "body_fraction_of_matched_gain": {
+        "upper": -0.007039203529045703,
+        "lower": 0.21021598908649602,
+        "face": 0.7968229593664121
+      }
+    }
+  },
+  "config_differences": {
+    "8hir7gzc": {
+      "config": [
+        "configs/gtdm3_teacher_c_rvq_beatx_scott.yaml",
+        "configs/gtdm3_teacher_c_face1_cos800_rvq_beatx_scott.yaml"
+      ],
+      "epochs": [
+        10000,
+        1000
+      ],
+      "face_loss_weight": [
+        2.5,
+        1
+      ],
+      "gestureformer_depformer_weights_per_step": [
+        null,
+        true
+      ],
+      "lr_cosine_end_epoch": [
+        -1,
+        800
+      ],
+      "name": [
+        "0908_1746_gtdm3_teacher_c_rvq_scott_bf16",
+        "0909_1548_gtdm3_teacher_c_face1_cos800_rvq_scott_bf16"
+      ],
+      "project_name": [
+        "gtdm3_teacher_c_rvq_scott_bf16",
+        "gtdm3_teacher_c_face1_cos800_rvq_scott_bf16"
+      ],
+      "wandb_group": [
+        "future-only-c-scott",
+        "future-only-c-face-cosine-scott"
+      ],
+      "wandb_name": [
+        "teacher-c-supervised-rvq-scott-bs64",
+        "teacher-c-face1-cos800-supervised-rvq-scott-bs64"
+      ],
+      "wandb_tags": [
+        [
+          "teacher-only",
+          "condition-c",
+          "future-only",
+          "supervised-teacher",
+          "scott",
+          "rvq",
+          "bs64"
+        ],
+        [
+          "teacher-only",
+          "condition-c",
+          "future-only",
+          "per-step-depth",
+          "face1",
+          "cosine800",
+          "scott",
+          "rvq",
+          "bs64"
+        ]
+      ]
+    },
+    "2ww4lkuq": {
+      "config": [
+        "configs/gtdm3_teacher_c_shareddepth_rvq_beatx_scott.yaml",
+        "configs/gtdm3_teacher_c_face1_cos800_rvq_beatx_scott.yaml"
+      ],
+      "epochs": [
+        10000,
+        1000
+      ],
+      "face_loss_weight": [
+        2.5,
+        1
+      ],
+      "gestureformer_depformer_weights_per_step": [
+        false,
+        true
+      ],
+      "lr_cosine_end_epoch": [
+        -1,
+        800
+      ],
+      "name": [
+        "0908_2232_gtdm3_teacher_c_shareddepth_rvq_scott_bf16",
+        "0909_1548_gtdm3_teacher_c_face1_cos800_rvq_scott_bf16"
+      ],
+      "project_name": [
+        "gtdm3_teacher_c_shareddepth_rvq_scott_bf16",
+        "gtdm3_teacher_c_face1_cos800_rvq_scott_bf16"
+      ],
+      "wandb_group": [
+        "future-only-c-shareddepth-scott",
+        "future-only-c-face-cosine-scott"
+      ],
+      "wandb_name": [
+        "teacher-c-shareddepth-supervised-rvq-scott-bs64",
+        "teacher-c-face1-cos800-supervised-rvq-scott-bs64"
+      ],
+      "wandb_tags": [
+        [
+          "teacher-only",
+          "condition-c",
+          "future-only",
+          "supervised-teacher",
+          "shared-depth",
+          "scott",
+          "rvq",
+          "bs64"
+        ],
+        [
+          "teacher-only",
+          "condition-c",
+          "future-only",
+          "per-step-depth",
+          "face1",
+          "cosine800",
+          "scott",
+          "rvq",
+          "bs64"
+        ]
+      ]
+    }
+  },
+  "new_run_detail": {
+    "best_total_epoch": 300,
+    "best_total_row": {
+      "best/temporal_q0_top5_acc": 0.40651851892471313,
+      "val/ce_upper": 2.582304745912552,
+      "epoch_train/ce_upper": 2.068561098405293,
+      "best/ce_upper": 2.582304745912552,
+      "epoch_train/kinematic_soft_weight": 0.5,
+      "epoch_train/kinematic_lower_hard_ce": 1.4051339285714286,
+      "epoch_train/kinematic_face_hard_ce": 1.1696428571428572,
+      "_step": 615,
+      "epoch_train/temporal_q0_top5_acc": 0.5098393133708409,
+      "val/ce_loss": 5.827263355255127,
+      "best/kinematic_face_hard_ce_epoch": 200,
+      "epoch_train/temporal_q0_entropy": 4.243941852024624,
+      "epoch_train/cont_upper_loss": 0.26925223214285715,
+      "best/ce_lower_epoch": 280,
+      "best/kinematic_upper_hard_ce": 2.359375,
+      "epoch_train/rvq_sample_probability": 0.15,
+      "val/temporal_q0_entropy": 4.428032875061035,
+      "epoch_train/ce_face": 1.2233667011771883,
+      "best/perplexity": 334,
+      "best/kinematic_upper_hard_ce_epoch": 260,
+      "val/ce_face": 1.3915159702301025,
+      "best/ce_face": 1.3720102310180664,
+      "epoch_train/rvq_target_entropy": 1.609576974596296,
+      "best/ce_lower": 1.8523557856678963,
+      "epoch_train/vad_loss": 0.009758649759792857,
+      "epoch_train/temporal_q0_acc": 0.25726786468710217,
+      "_runtime": 1582.28026216,
+      "best/ce_upper_epoch": 300,
+      "best/kinematic_lower_hard_ce_epoch": 280,
+      "epoch_train/rvq_changed_from_deterministic": 0.25738618203571867,
+      "best/temporal_q0_gt_prob_epoch": 300,
+      "val/kinematic_hard_ce": 5.59375,
+      "val/kinematic_upper_hard_ce": 2.359375,
+      "val/ce_lower": 1.8534425273537636,
+      "best/temporal_q0_entropy": 4.428032875061035,
+      "epoch_train/temporal_q0_gt_prob": 0.09541964850255422,
+      "epoch_train/cont_face_loss": 0.37890625,
+      "val/kinematic_lower_hard_ce": 1.8515625,
+      "epoch_train/ce_lower": 1.591316961816379,
+      "val/kinematic_face_hard_ce": 1.390625,
+      "best/temporal_q0_ce": 4.375,
+      "best/temporal_q0_acc_epoch": 300,
+      "best/kinematic_face_hard_ce": 1.375,
+      "val/temporal_q0_acc": 0.19881480932235718,
+      "epoch_train/kinematic_hard_ce": 4.285714285714286,
+      "best/temporal_q0_ce_epoch": 300,
+      "val/perplexity": 334,
+      "best/kinematic_lower_hard_ce": 1.8515625,
+      "best/kinematic_hard_ce": 5.59375,
+      "trainer/epoch": 300,
+      "best/ce_loss_epoch": 300,
+      "epoch_train/cont_lower_loss": 0.369140625,
+      "best/kinematic_hard_ce_epoch": 260,
+      "best/temporal_q0_entropy_epoch": 300,
+      "val/temporal_q0_ce": 4.375,
+      "epoch_train/rvq_sampled_nonnearest": 0.08344197166817528,
+      "epoch_train/temporal_q0_ce": 3.716517857142857,
+      "epoch_train/kinematic_upper_hard_ce": 1.7064732142857142,
+      "best/temporal_q0_gt_prob": 0.0711916908621788,
+      "epoch_train/kinematic_soft_ce": 5.106978825160435,
+      "best/temporal_q0_top5_acc_epoch": 300,
+      "val/temporal_q0_top5_acc": 0.40651851892471313,
+      "best/perplexity_epoch": 260,
+      "epoch_train/perplexity": 87.5,
+      "best/ce_face_epoch": 220,
+      "best/ce_loss": 5.827263355255127,
+      "_timestamp": 1788941758.2335432,
+      "epoch_train/ce_loss": 4.883244718824114,
+      "best/temporal_q0_acc": 0.19881480932235718,
+      "val/temporal_q0_gt_prob": 0.0711916908621788,
+      "derived/depth_mean_ce": 5.903698268689607
+    },
+    "last_row": {
+      "best/temporal_q0_top5_acc": 0.48755553364753723,
+      "val/ce_upper": 2.716331496834755,
+      "epoch_train/ce_upper": 1.5388594950948442,
+      "best/ce_upper": 2.582304745912552,
+      "epoch_train/kinematic_soft_weight": 0.5,
+      "epoch_train/kinematic_lower_hard_ce": 1,
+      "epoch_train/kinematic_face_hard_ce": 0.7611607142857143,
+      "_step": 2049,
+      "epoch_train/temporal_q0_top5_acc": 0.6383035949298314,
+      "val/ce_loss": 6.73590087890625,
+      "best/kinematic_face_hard_ce_epoch": 200,
+      "epoch_train/temporal_q0_entropy": 3.549368688038417,
+      "epoch_train/cont_upper_loss": 0.22739955357142858,
+      "best/ce_lower_epoch": 280,
+      "best/kinematic_upper_hard_ce": 2.359375,
+      "epoch_train/rvq_sample_probability": 0.15,
+      "val/temporal_q0_entropy": 3.886137008666992,
+      "epoch_train/ce_face": 0.9052596262523106,
+      "best/perplexity": 334,
+      "best/kinematic_upper_hard_ce_epoch": 260,
+      "val/ce_face": 1.7967599630355835,
+      "best/ce_face": 1.3720102310180664,
+      "epoch_train/rvq_target_entropy": 1.6095372438430786,
+      "best/ce_lower": 1.8523557856678963,
+      "epoch_train/vad_loss": 0.004489571774943865,
+      "epoch_train/temporal_q0_acc": 0.3476071570600782,
+      "_runtime": 4857.342674034,
+      "best/ce_upper_epoch": 300,
+      "best/kinematic_lower_hard_ce_epoch": 280,
+      "epoch_train/rvq_changed_from_deterministic": 0.2586116279874529,
+      "best/temporal_q0_gt_prob_epoch": 940,
+      "val/kinematic_hard_ce": 6.53125,
+      "val/kinematic_upper_hard_ce": 2.515625,
+      "val/ce_lower": 2.2228094041347504,
+      "best/temporal_q0_entropy": 3.886137008666992,
+      "epoch_train/temporal_q0_gt_prob": 0.16320570026125228,
+      "epoch_train/cont_face_loss": 0.333984375,
+      "val/kinematic_lower_hard_ce": 2.21875,
+      "epoch_train/ce_lower": 1.2442477217742376,
+      "val/kinematic_face_hard_ce": 1.796875,
+      "best/temporal_q0_ce": 3.90625,
+      "best/temporal_q0_acc_epoch": 940,
+      "best/kinematic_face_hard_ce": 1.375,
+      "val/temporal_q0_acc": 0.2414814829826355,
+      "epoch_train/kinematic_hard_ce": 2.84375,
+      "best/temporal_q0_ce_epoch": 780,
+      "val/perplexity": 856,
+      "best/kinematic_lower_hard_ce": 1.8515625,
+      "best/kinematic_hard_ce": 5.59375,
+      "trainer/epoch": 1000,
+      "best/ce_loss_epoch": 300,
+      "epoch_train/cont_lower_loss": 0.35379464285714285,
+      "best/kinematic_hard_ce_epoch": 260,
+      "best/temporal_q0_entropy_epoch": 1000,
+      "val/temporal_q0_ce": 3.90625,
+      "epoch_train/rvq_sampled_nonnearest": 0.08367932162114552,
+      "epoch_train/temporal_q0_ce": 2.986607142857143,
+      "epoch_train/kinematic_upper_hard_ce": 1.0904017857142858,
+      "best/temporal_q0_gt_prob": 0.10391302406787872,
+      "epoch_train/kinematic_soft_ce": 4.227695805685861,
+      "best/temporal_q0_top5_acc_epoch": 980,
+      "val/temporal_q0_top5_acc": 0.48681479692459106,
+      "best/perplexity_epoch": 260,
+      "epoch_train/perplexity": 20.107142857142858,
+      "best/ce_face_epoch": 220,
+      "best/ce_loss": 5.827263355255127,
+      "_timestamp": 1788945033.2954752,
+      "epoch_train/ce_loss": 3.6883666855948314,
+      "best/temporal_q0_acc": 0.2428148090839386,
+      "val/temporal_q0_gt_prob": 0.10390985012054443,
+      "derived/depth_mean_ce": 6.884829872532895
+    },
+    "plateau_800_to_1000": {
+      "val/ce_loss": {
+        "at_800": 6.715914249420166,
+        "at_1000": 6.73590087890625,
+        "change_percent": 0.297601022642735
+      },
+      "val/ce_upper": {
+        "at_800": 2.714870572090149,
+        "at_1000": 2.716331496834755,
+        "change_percent": 0.05381194815048396
+      },
+      "val/ce_lower": {
+        "at_800": 2.2124075293540955,
+        "at_1000": 2.2228094041347504,
+        "change_percent": 0.47016088322984206
+      },
+      "val/ce_face": {
+        "at_800": 1.7886357009410858,
+        "at_1000": 1.7967599630355835,
+        "change_percent": 0.4542155839908135
+      },
+      "val/temporal_q0_ce": {
+        "at_800": 3.90625,
+        "at_1000": 3.90625,
+        "change_percent": 0.0
+      },
+      "val/temporal_q0_acc": {
+        "at_800": 0.24088887870311737,
+        "at_1000": 0.2414814829826355,
+        "change_percent": 0.24600732201027764
+      },
+      "derived/depth_mean_ce": {
+        "at_800": 6.863791315179122,
+        "at_1000": 6.884829872532895,
+        "change_percent": 0.30651510787116365
+      }
+    },
+    "train_val_at_best_and_980": {
+      "300": {
+        "val/ce_upper": 2.582304745912552,
+        "epoch_train/ce_upper": 2.068561098405293,
+        "epoch_train/kinematic_soft_weight": 0.5,
+        "epoch_train/kinematic_lower_hard_ce": 1.4051339285714286,
+        "epoch_train/kinematic_face_hard_ce": 1.1696428571428572,
+        "epoch_train/temporal_q0_top5_acc": 0.5098393133708409,
+        "val/ce_loss": 5.827263355255127,
+        "epoch_train/temporal_q0_entropy": 4.243941852024624,
+        "epoch_train/cont_upper_loss": 0.26925223214285715,
+        "epoch_train/rvq_sample_probability": 0.15,
+        "epoch_train/ce_face": 1.2233667011771883,
+        "val/ce_face": 1.3915159702301025,
+        "epoch_train/rvq_target_entropy": 1.609576974596296,
+        "epoch_train/vad_loss": 0.009758649759792857,
+        "epoch_train/temporal_q0_acc": 0.25726786468710217,
+        "epoch_train/rvq_changed_from_deterministic": 0.25738618203571867,
+        "val/kinematic_hard_ce": 5.59375,
+        "val/kinematic_upper_hard_ce": 2.359375,
+        "val/ce_lower": 1.8534425273537636,
+        "epoch_train/temporal_q0_gt_prob": 0.09541964850255422,
+        "epoch_train/cont_face_loss": 0.37890625,
+        "val/kinematic_lower_hard_ce": 1.8515625,
+        "epoch_train/ce_lower": 1.591316961816379,
+        "val/kinematic_face_hard_ce": 1.390625,
+        "val/temporal_q0_acc": 0.19881480932235718,
+        "epoch_train/kinematic_hard_ce": 4.285714285714286,
+        "epoch_train/cont_lower_loss": 0.369140625,
+        "val/temporal_q0_ce": 4.375,
+        "epoch_train/rvq_sampled_nonnearest": 0.08344197166817528,
+        "epoch_train/temporal_q0_ce": 3.716517857142857,
+        "epoch_train/kinematic_upper_hard_ce": 1.7064732142857142,
+        "epoch_train/kinematic_soft_ce": 5.106978825160435,
+        "epoch_train/perplexity": 87.5,
+        "epoch_train/ce_loss": 4.883244718824114,
+        "derived/depth_mean_ce": 5.903698268689607
+      },
+      "980": {
+        "val/ce_upper": 2.7162531465291977,
+        "epoch_train/ce_upper": 1.5332299300602503,
+        "epoch_train/kinematic_soft_weight": 0.5,
+        "epoch_train/kinematic_lower_hard_ce": 1.0005580357142858,
+        "epoch_train/kinematic_face_hard_ce": 0.7578125,
+        "epoch_train/temporal_q0_top5_acc": 0.6375893098967416,
+        "val/ce_loss": 6.7341227531433105,
+        "epoch_train/temporal_q0_entropy": 3.5624992847442627,
+        "epoch_train/cont_upper_loss": 0.22670200892857142,
+        "epoch_train/rvq_sample_probability": 0.15,
+        "epoch_train/ce_face": 0.9020314855234963,
+        "val/ce_face": 1.7961782217025757,
+        "epoch_train/rvq_target_entropy": 1.6095845358712333,
+        "epoch_train/vad_loss": 0.0009028843778651208,
+        "epoch_train/temporal_q0_acc": 0.348928587777274,
+        "epoch_train/rvq_changed_from_deterministic": 0.25854168619428364,
+        "val/kinematic_hard_ce": 6.53125,
+        "val/kinematic_upper_hard_ce": 2.515625,
+        "val/ce_lower": 2.2216917872428894,
+        "epoch_train/temporal_q0_gt_prob": 0.16215297366891587,
+        "epoch_train/cont_face_loss": 0.3345424107142857,
+        "val/kinematic_lower_hard_ce": 2.21875,
+        "epoch_train/ce_lower": 1.2447885030082293,
+        "val/kinematic_face_hard_ce": 1.796875,
+        "val/temporal_q0_acc": 0.2419259250164032,
+        "epoch_train/kinematic_hard_ce": 2.841517857142857,
+        "epoch_train/cont_lower_loss": 0.35546875,
+        "val/temporal_q0_ce": 3.90625,
+        "epoch_train/rvq_sampled_nonnearest": 0.08373809925147466,
+        "epoch_train/temporal_q0_ce": 2.9933035714285716,
+        "epoch_train/kinematic_upper_hard_ce": 1.0814732142857142,
+        "epoch_train/kinematic_soft_ce": 4.221520287649972,
+        "epoch_train/perplexity": 19.875,
+        "epoch_train/ce_loss": 3.6800498962402344,
+        "derived/depth_mean_ce": 6.882958161203485
+      }
+    },
+    "lr_schedule_mismatch_epochs": []
+  }
+}

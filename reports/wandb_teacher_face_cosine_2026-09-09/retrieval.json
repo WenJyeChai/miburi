@@ -1,0 +1,30 @@
+{
+  "summary_snapshot_at_utc": "2026-09-09T09:19:52.703148+00:00",
+  "entity": "wenjye00-hong-kong-university-of-science-and-technology",
+  "project": "miburi_single",
+  "retrieved_at_utc": "2026-09-09T09:20:25.361473+00:00",
+  "history_sampling": "All logged steps, disjoint <=500-step ranges, 500 requested rows per range.",
+  "integrity": {
+    "lqd1cmjh": {
+      "rows": 2051,
+      "first_step": 0,
+      "last_step": 2050,
+      "missing_steps": 0,
+      "validation_rows": 50
+    },
+    "2ww4lkuq": {
+      "rows": 2920,
+      "first_step": 0,
+      "last_step": 2919,
+      "missing_steps": 0,
+      "validation_rows": 71
+    },
+    "8hir7gzc": {
+      "rows": 3923,
+      "first_step": 0,
+      "last_step": 3922,
+      "missing_steps": 0,
+      "validation_rows": 95
+    }
+  }
+}
