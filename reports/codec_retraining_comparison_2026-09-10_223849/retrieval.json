@@ -1,0 +1,58 @@
+{
+  "summary_snapshot_at_utc": "2026-09-10T14:39:03.431805+00:00",
+  "entity": "wenjye00-hong-kong-university-of-science-and-technology",
+  "project": "miburi_single",
+  "retrieved_at_utc": "2026-09-10T14:39:35.290692+00:00",
+  "history_sampling": "All logged steps, disjoint <=500-step ranges, 500 requested rows per range.",
+  "integrity": {
+    "u2zs5s3p": {
+      "rows": 2051,
+      "first_step": 0,
+      "last_step": 2050,
+      "missing_steps": 0,
+      "validation_rows": 50
+    },
+    "rmyldw6a": {
+      "rows": 2051,
+      "first_step": 0,
+      "last_step": 2050,
+      "missing_steps": 0,
+      "validation_rows": 50
+    },
+    "akld8gc6": {
+      "rows": 2111,
+      "first_step": 0,
+      "last_step": 2110,
+      "missing_steps": 0,
+      "validation_rows": 0
+    },
+    "wg7n0bze": {
+      "rows": 2107,
+      "first_step": 0,
+      "last_step": 2106,
+      "missing_steps": 0,
+      "validation_rows": 0
+    },
+    "j4taovlj": {
+      "rows": 2103,
+      "first_step": 0,
+      "last_step": 2102,
+      "missing_steps": 0,
+      "validation_rows": 0
+    },
+    "lqd1cmjh": {
+      "rows": 2051,
+      "first_step": 0,
+      "last_step": 2050,
+      "missing_steps": 0,
+      "validation_rows": 50
+    },
+    "59fnmnjg": {
+      "rows": 2051,
+      "first_step": 0,
+      "last_step": 2050,
+      "missing_steps": 0,
+      "validation_rows": 50
+    }
+  }
+}

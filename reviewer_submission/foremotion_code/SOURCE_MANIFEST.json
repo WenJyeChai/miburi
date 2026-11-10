@@ -1,0 +1,509 @@
+{
+  "description": "Condition C source extraction. Relative source paths refer to the original project; no original files were modified.",
+  "files": [
+    {
+      "path": "LICENSE",
+      "source_sha256": "e67fae10a77c20bd1fa2bfc792f42d179dfae7fc30c6910c376b9dcb51c73f8d",
+      "packaged_sha256": "e67fae10a77c20bd1fa2bfc792f42d179dfae7fc30c6910c376b9dcb51c73f8d",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "LICENSE.audiocraft",
+      "source_sha256": "63e8210e6bf3e8c032dc0c69b1d1d2e3ab72c14b02cabcc0dada2618bb188b97",
+      "packaged_sha256": "63e8210e6bf3e8c032dc0c69b1d1d2e3ab72c14b02cabcc0dada2618bb188b97",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "configs/gtdm3_foremotion_c_rvq_beatx_scott.yaml",
+      "source_sha256": "adfaa2408317613f6b196615536b9730df8b11c455ef926c7de0ee762cd34322",
+      "packaged_sha256": "adfaa2408317613f6b196615536b9730df8b11c455ef926c7de0ee762cd34322",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/__init__.py",
+      "source_sha256": "4af3b78b0c878c381223376bad769d79158b401bac358a58183c200809275435",
+      "packaged_sha256": "4af3b78b0c878c381223376bad769d79158b401bac358a58183c200809275435",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/conditioners/__init__.py",
+      "source_sha256": "b7a958309c85afdb89baa00c9d658191979da12acf3c36805b742b05002f59fe",
+      "packaged_sha256": "b7a958309c85afdb89baa00c9d658191979da12acf3c36805b742b05002f59fe",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/conditioners/base.py",
+      "source_sha256": "ab1026f1ce616fd83aca587dd68a64289ea92baa43722d6ddddd3e656e2ec61c",
+      "packaged_sha256": "ab1026f1ce616fd83aca587dd68a64289ea92baa43722d6ddddd3e656e2ec61c",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/conditioners/text.py",
+      "source_sha256": "5d1fe701979c6bf936ad872d8002cee859dd111ddaa489b872cfbe7254ce1296",
+      "packaged_sha256": "5d1fe701979c6bf936ad872d8002cee859dd111ddaa489b872cfbe7254ce1296",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/download_assets.py",
+      "source_sha256": "89784ac16f82d4fbfb402162b3dc3ffee430991a50d98fce1c0ec35a19331a58",
+      "packaged_sha256": "89784ac16f82d4fbfb402162b3dc3ffee430991a50d98fce1c0ec35a19331a58",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/download_beatx_dataset.py",
+      "source_sha256": "fa0fa624b7c0b8d4102f48bdeac955451c6b8ca1612d2de7b02a880c00e80fbd",
+      "packaged_sha256": "fa0fa624b7c0b8d4102f48bdeac955451c6b8ca1612d2de7b02a880c00e80fbd",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/download_checkpoints.py",
+      "source_sha256": "336a12993293976a1e28213055944b79e1358f63629a4814c946e05ce6de9f19",
+      "packaged_sha256": "336a12993293976a1e28213055944b79e1358f63629a4814c946e05ce6de9f19",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/__init__.py",
+      "source_sha256": "8c3322bda3f8ecc0780c73737e34330919ac592eb35619d5aa9b08d31e68e0d3",
+      "packaged_sha256": "8c3322bda3f8ecc0780c73737e34330919ac592eb35619d5aa9b08d31e68e0d3",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/compression.py",
+      "source_sha256": "5425d2a5930dd50ab12425f2948c8dea34e3d42c595b2a5d8a88efae1a7a35a1",
+      "packaged_sha256": "5425d2a5930dd50ab12425f2948c8dea34e3d42c595b2a5d8a88efae1a7a35a1",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/gesture_codec.py",
+      "source_sha256": "8f6294c2d301742093656a5f832b5c657c2b04da4b9e0e0ab7a5ec92087cdcc3",
+      "packaged_sha256": "8f6294c2d301742093656a5f832b5c657c2b04da4b9e0e0ab7a5ec92087cdcc3",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/gesture_lm.py",
+      "source_sha256": "93f7349179c11ac4973cd11aaa98de75cff30b986b65a36025a6158efe20db4c",
+      "packaged_sha256": "93f7349179c11ac4973cd11aaa98de75cff30b986b65a36025a6158efe20db4c",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/gesture_lm_c2f.py",
+      "source_sha256": "9d4ead21770530f83a04ac7ed7ca3c629a408837a462465f12d43732be55c2f2",
+      "packaged_sha256": "9d4ead21770530f83a04ac7ed7ca3c629a408837a462465f12d43732be55c2f2",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/gesture_lm_condition_c.py",
+      "source_sha256": "5620bbda8a7039b75ec2e0c773329c24f1e1054e0f752949bf3ceb6f5b48018e",
+      "packaged_sha256": "5620bbda8a7039b75ec2e0c773329c24f1e1054e0f752949bf3ceb6f5b48018e",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/gesture_lm_future_gesture.py",
+      "source_sha256": "2ba4030dc70e384262794d611f1132246439ec26f17caa3d5b441ca51e680685",
+      "packaged_sha256": "2ba4030dc70e384262794d611f1132246439ec26f17caa3d5b441ca51e680685",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/gesture_lm_offline.py",
+      "source_sha256": "be450bdb6cec36db68a37fce47dcae1f7552a7da7b410d887afe951edb1d90d0",
+      "packaged_sha256": "be450bdb6cec36db68a37fce47dcae1f7552a7da7b410d887afe951edb1d90d0",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/gesture_lm_regret.py",
+      "source_sha256": "f7619fa727ce803e7f6242022b996f9401f1b43447bf458ab39ddc2d5d21dd72",
+      "packaged_sha256": "f7619fa727ce803e7f6242022b996f9401f1b43447bf458ab39ddc2d5d21dd72",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/gesture_lm_reset_future.py",
+      "source_sha256": "28391917667d2653f08f31fa7c5ed0cf765a3772ac1a11ff06c77aa7b8148507",
+      "packaged_sha256": "28391917667d2653f08f31fa7c5ed0cf765a3772ac1a11ff06c77aa7b8148507",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/gesture_lm_shared_regret.py",
+      "source_sha256": "a408afafa1613279cf02546299038c048a8e0a49c34f72262492ce12827549d9",
+      "packaged_sha256": "a408afafa1613279cf02546299038c048a8e0a49c34f72262492ce12827549d9",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/lm.py",
+      "source_sha256": "1aaacd44d9ad5001f6018bb7994d4c41edb00831b963682a9c58c93fdc34dc9b",
+      "packaged_sha256": "1aaacd44d9ad5001f6018bb7994d4c41edb00831b963682a9c58c93fdc34dc9b",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/lm_utils.py",
+      "source_sha256": "72f822cd6164a08f85ad509725efcd73057efe435d242efc8a76b5261a36c12e",
+      "packaged_sha256": "72f822cd6164a08f85ad509725efcd73057efe435d242efc8a76b5261a36c12e",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/loaders.py",
+      "source_sha256": "d161c7a371c6f33aae5af515ed1358c5723ca694033f863332cd2e620376657a",
+      "packaged_sha256": "d161c7a371c6f33aae5af515ed1358c5723ca694033f863332cd2e620376657a",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/models/rvq_depth_regularization.py",
+      "source_sha256": "4a3b33a453b223b4725c990804394207b0222a36caf0f2e2f80231cf3b36b491",
+      "packaged_sha256": "4a3b33a453b223b4725c990804394207b0222a36caf0f2e2f80231cf3b36b491",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/modules/__init__.py",
+      "source_sha256": "ba5bed33203d409f88d0a55999737a7e51b7584f4826ac78af10724727c17a70",
+      "packaged_sha256": "ba5bed33203d409f88d0a55999737a7e51b7584f4826ac78af10724727c17a70",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/modules/conv.py",
+      "source_sha256": "ea8771499d5eba1be3e76a523c91b9403f4d1b6a9e87d253f53e3418a964bbde",
+      "packaged_sha256": "ea8771499d5eba1be3e76a523c91b9403f4d1b6a9e87d253f53e3418a964bbde",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/modules/gating.py",
+      "source_sha256": "c0b6fc6ef56e241ab0a4e86a0344aec04284d33d45d9d57507d54c77efbe535a",
+      "packaged_sha256": "c0b6fc6ef56e241ab0a4e86a0344aec04284d33d45d9d57507d54c77efbe535a",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/modules/lora.py",
+      "source_sha256": "88c39d2bd27c9871506c3fcb2ad3f270cf616efef96285d03e94fc09c5e978bd",
+      "packaged_sha256": "88c39d2bd27c9871506c3fcb2ad3f270cf616efef96285d03e94fc09c5e978bd",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/modules/resample.py",
+      "source_sha256": "5695fa6f5eace9de52baa4409517e0f5834bd6fa6cf308faf78a43fb2a9692d6",
+      "packaged_sha256": "5695fa6f5eace9de52baa4409517e0f5834bd6fa6cf308faf78a43fb2a9692d6",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/modules/rope.py",
+      "source_sha256": "ef791a6a91f8dd64dee014065db32a3560f3c5bf6ca1e8be419d670fbd04278a",
+      "packaged_sha256": "ef791a6a91f8dd64dee014065db32a3560f3c5bf6ca1e8be419d670fbd04278a",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/modules/seanet.py",
+      "source_sha256": "631eef5cbb7813ebda4a6cd155cf866ecc8408026a3cd7674d8a268a6affa791",
+      "packaged_sha256": "631eef5cbb7813ebda4a6cd155cf866ecc8408026a3cd7674d8a268a6affa791",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/modules/streaming.py",
+      "source_sha256": "29906fd8836955e81f898fa61d455c0a3118f69dab2e3b5043b2bc176000631d",
+      "packaged_sha256": "29906fd8836955e81f898fa61d455c0a3118f69dab2e3b5043b2bc176000631d",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/modules/transformer.py",
+      "source_sha256": "0d63b2e6b6a6af51aca8d0dd3b270281e720f44ca8ab04ca1537ff3abae734ac",
+      "packaged_sha256": "0d63b2e6b6a6af51aca8d0dd3b270281e720f44ca8ab04ca1537ff3abae734ac",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/modules/wavelet.py",
+      "source_sha256": "db2a03504edce1996d8cff07e5a2ffaa1bc2a810e7e1187589aabc9bf9d617e6",
+      "packaged_sha256": "db2a03504edce1996d8cff07e5a2ffaa1bc2a810e7e1187589aabc9bf9d617e6",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/quantization/__init__.py",
+      "source_sha256": "9e64a5a0d618d52f802652f360b3d13ecde6ae0fc6860d58d37b92e907ce687e",
+      "packaged_sha256": "9e64a5a0d618d52f802652f360b3d13ecde6ae0fc6860d58d37b92e907ce687e",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/quantization/base.py",
+      "source_sha256": "0dca500e52c32bea1dfbc82e12d9de78a944a7866a81c86a90746f068b64048c",
+      "packaged_sha256": "0dca500e52c32bea1dfbc82e12d9de78a944a7866a81c86a90746f068b64048c",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/quantization/core_vq.py",
+      "source_sha256": "1a064fe7ba3bee5867bedcbacdcadf51b83c14758a410ab2f452192851df8162",
+      "packaged_sha256": "1a064fe7ba3bee5867bedcbacdcadf51b83c14758a410ab2f452192851df8162",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/quantization/vq.py",
+      "source_sha256": "d2dae70905b2cca9e0db5754784fc3b54dfb2adf63a2f381711860eaeee5096c",
+      "packaged_sha256": "d2dae70905b2cca9e0db5754784fc3b54dfb2adf63a2f381711860eaeee5096c",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/utils/__init__.py",
+      "source_sha256": "e84a7d76f3b1fd83cc9459e96dc5ddc019853405b83f663b78935c47502fdb10",
+      "packaged_sha256": "e84a7d76f3b1fd83cc9459e96dc5ddc019853405b83f663b78935c47502fdb10",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/utils/compile.py",
+      "source_sha256": "a625c695f7a65e81b25100140b7564ad4b38a0b05c988e5228a36b9744714b10",
+      "packaged_sha256": "a625c695f7a65e81b25100140b7564ad4b38a0b05c988e5228a36b9744714b10",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/utils/motion_utils.py",
+      "source_sha256": "8fb43b0ef76991bf957b247b69e3ecd99000312e56ff6b203a38fcf5bcd54c07",
+      "packaged_sha256": "8fb43b0ef76991bf957b247b69e3ecd99000312e56ff6b203a38fcf5bcd54c07",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/utils/quantize.py",
+      "source_sha256": "b5e8acac2fb3f2aa1f69ac442f3b34a764a92db0318de68796ccfab4902338aa",
+      "packaged_sha256": "b5e8acac2fb3f2aa1f69ac442f3b34a764a92db0318de68796ccfab4902338aa",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "miburi/utils/sampling.py",
+      "source_sha256": "b20696d930f62067067130539e518e4e292ed7387359a90cc5a13f20f341235d",
+      "packaged_sha256": "b20696d930f62067067130539e518e4e292ed7387359a90cc5a13f20f341235d",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "pyproject.toml",
+      "source_sha256": "71f9f2787d0859295933839eef67bf78d93201b6323a8567a6949d9a1b3db390",
+      "packaged_sha256": "71f9f2787d0859295933839eef67bf78d93201b6323a8567a6949d9a1b3db390",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "requirements.txt",
+      "source_sha256": "fd20ac1e18f6cf8aa04f4844e85a6c8240041d15ecf33ddfc82b993e6f58a947",
+      "packaged_sha256": "fd20ac1e18f6cf8aa04f4844e85a6c8240041d15ecf33ddfc82b993e6f58a947",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/smoke_test_condition_c_trainers.py",
+      "source_sha256": "1cbcb4408867882903c2cd9b54c2c22af8604d4018afe39540737beec9f83dad",
+      "packaged_sha256": "1cbcb4408867882903c2cd9b54c2c22af8604d4018afe39540737beec9f83dad",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/smoke_test_gesture_lm_condition_c.py",
+      "source_sha256": "37cfca2487b05a6a252c63573086927322795a84b7324ba04dc3dc341bbf8a17",
+      "packaged_sha256": "37cfca2487b05a6a252c63573086927322795a84b7324ba04dc3dc341bbf8a17",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/smoke_test_gesture_lm_offline.py",
+      "source_sha256": "d35cce17fa8fe0b4dbe8adc437b44a2d84b5fcf75059279cb617e761823a0924",
+      "packaged_sha256": "d35cce17fa8fe0b4dbe8adc437b44a2d84b5fcf75059279cb617e761823a0924",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/smoke_test_rvq_depth_regularization.py",
+      "source_sha256": "31ae85038ecedee4396603c35e02b59f18f7f0caa34ae48c56b8d33124718fb8",
+      "packaged_sha256": "31ae85038ecedee4396603c35e02b59f18f7f0caa34ae48c56b8d33124718fb8",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/train.py",
+      "source_sha256": "b8a6a42cd813cfb14a6e5f2cdcb92a7d2c852852c6dc6d5ca173cea0b8cf70cc",
+      "packaged_sha256": "b8a6a42cd813cfb14a6e5f2cdcb92a7d2c852852c6dc6d5ca173cea0b8cf70cc",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/__init__.py",
+      "source_sha256": "599f9a385ac269248f5058c45baee70bd56c490092aa183d309454a822958f05",
+      "packaged_sha256": "ef293423fdc11225503b75ce51b7682b1e16c247fa123bce5ead04d2b33d908f",
+      "change": "narrowed import registry only"
+    },
+    {
+      "path": "scripts/trainers/baseglm_trainer.py",
+      "source_sha256": "1e21679e2156b444952b83c43234e7193130f17290741afa6b1ab08b7b3cbb73",
+      "packaged_sha256": "1e21679e2156b444952b83c43234e7193130f17290741afa6b1ab08b7b3cbb73",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/dataloaders/__init__.py",
+      "source_sha256": "812439829660cf466c93011f6d79b98fd29b561a59d5260a30e496144ad2b815",
+      "packaged_sha256": "e1b6570323cff984ea12ce50b5afc847a00f0477c854e0f6ef2d72bb586c0dcd",
+      "change": "narrowed import registry only"
+    },
+    {
+      "path": "scripts/trainers/dataloaders/beatx/build_hdf5_beatx.py",
+      "source_sha256": "5f33b83d524a1ca9c30787f12fea0d7530c510cc4281981633db3c7a0b0891e0",
+      "packaged_sha256": "5f33b83d524a1ca9c30787f12fea0d7530c510cc4281981633db3c7a0b0891e0",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/dataloaders/unified_dataset.py",
+      "source_sha256": "8c0062d4ec3a27b4547fc41526f919eb83e9cb8e6f0d823a95cda7d33e723b52",
+      "packaged_sha256": "8c0062d4ec3a27b4547fc41526f919eb83e9cb8e6f0d823a95cda7d33e723b52",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/dataloaders/utils/__init__.py",
+      "source_sha256": "6b686218c3213da92de7eb053964f27ee725ac722a3ba4b67890f8d73a18894f",
+      "packaged_sha256": "6b686218c3213da92de7eb053964f27ee725ac722a3ba4b67890f8d73a18894f",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/dataloaders/utils/chunk_index_cache.py",
+      "source_sha256": "183ca39fd673ec8d10333fefb16b54ffa282b8a3b0347b01a1252666108cdc55",
+      "packaged_sha256": "183ca39fd673ec8d10333fefb16b54ffa282b8a3b0347b01a1252666108cdc55",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/dataloaders/utils/data_tools.py",
+      "source_sha256": "f110bc2c8c96a50ba92cdf3ac03a238c7cf911111c2a31de0a6e5450ad9684b2",
+      "packaged_sha256": "f110bc2c8c96a50ba92cdf3ac03a238c7cf911111c2a31de0a6e5450ad9684b2",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/dataloaders/utils/interleaver.py",
+      "source_sha256": "e42e7821076ee216a3aa174e086200be3b35da738057dc4a6b597f53f8c27171",
+      "packaged_sha256": "e42e7821076ee216a3aa174e086200be3b35da738057dc4a6b597f53f8c27171",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/dataloaders/utils/motion_kinematics.py",
+      "source_sha256": "2af4f30beb6c2a46314423fbc7e6050f3b17d60b5a3d30575bab63aea034b2c1",
+      "packaged_sha256": "2af4f30beb6c2a46314423fbc7e6050f3b17d60b5a3d30575bab63aea034b2c1",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/dataloaders/utils/pose_valid.py",
+      "source_sha256": "d6c867eedf440fa72367e0c932e5fcbd150928bb28f47bad6cc9725352e8b5dd",
+      "packaged_sha256": "d6c867eedf440fa72367e0c932e5fcbd150928bb28f47bad6cc9725352e8b5dd",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/dataloaders/utils/rotation_conversions.py",
+      "source_sha256": "7e82e7e2662493d393cd3623a23762f5ae84e3dbca2747e848bca63dca869436",
+      "packaged_sha256": "7e82e7e2662493d393cd3623a23762f5ae84e3dbca2747e848bca63dca869436",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/dataloaders/utils/visualize.py",
+      "source_sha256": "61f5040b7b847f7f0e2c7058430bddd10b1affcb13bb0b0ca219fd20a7840629",
+      "packaged_sha256": "61f5040b7b847f7f0e2c7058430bddd10b1affcb13bb0b0ca219fd20a7840629",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/uflgtdm3_condition_c_trainer.py",
+      "source_sha256": "6b1c07ee14c375e0836755fb6b82c0b08335000e6ba11ae21f5eb66c7a4a51c8",
+      "packaged_sha256": "6b1c07ee14c375e0836755fb6b82c0b08335000e6ba11ae21f5eb66c7a4a51c8",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/uflgtdm3_offline_trainer.py",
+      "source_sha256": "d6ab5cfdc8f9d5bcaf2806951de201472f7655d7d43c29c3ca5cb2beab4d8d1f",
+      "packaged_sha256": "d6ab5cfdc8f9d5bcaf2806951de201472f7655d7d43c29c3ca5cb2beab4d8d1f",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/uflgtdm3_shared_regret_rvq_trainer.py",
+      "source_sha256": "2035e3f6b0baaeb4111b07451f5608b5a645033cd21323522d36e52b304aebde",
+      "packaged_sha256": "2035e3f6b0baaeb4111b07451f5608b5a645033cd21323522d36e52b304aebde",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/uflgtdm3_shared_regret_trainer.py",
+      "source_sha256": "4095f204fba74a96f0465c49d61b3718ce8d23a7d763675f4ba6d3bd2ea6fc00",
+      "packaged_sha256": "4095f204fba74a96f0465c49d61b3718ce8d23a7d763675f4ba6d3bd2ea6fc00",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/uflgtdm3_trainer.py",
+      "source_sha256": "adecc402239e7eb46ae58988fece2b55913bca7ca748238bef541569b3b8a7e8",
+      "packaged_sha256": "adecc402239e7eb46ae58988fece2b55913bca7ca748238bef541569b3b8a7e8",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/config.py",
+      "source_sha256": "5112dd0456cad14803195f0e37d10b63fcc90ea3419685157188221e16273931",
+      "packaged_sha256": "5112dd0456cad14803195f0e37d10b63fcc90ea3419685157188221e16273931",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/distributed.py",
+      "source_sha256": "aa65416dfa1032465cffddf4ac1c5bbba922b94d7525634aa531ef143fdc755e",
+      "packaged_sha256": "aa65416dfa1032465cffddf4ac1c5bbba922b94d7525634aa531ef143fdc755e",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/loss_factory.py",
+      "source_sha256": "eee4c6667b35c92299bf17dd4bfa495759435584a7d1dec086cd5a4054f1fd8c",
+      "packaged_sha256": "eee4c6667b35c92299bf17dd4bfa495759435584a7d1dec086cd5a4054f1fd8c",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/metric_utils/motion_encoder.py",
+      "source_sha256": "3238b9b142a283e498009f4754e4d4c4ff21906755e88375ca64f85a3a365dae",
+      "packaged_sha256": "3238b9b142a283e498009f4754e4d4c4ff21906755e88375ca64f85a3a365dae",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/metric_utils/motion_representation.py",
+      "source_sha256": "97a49a9bb0cbe1b1b468014f2c91105a07f3bca40ae600f6a269668e0896ffbd",
+      "packaged_sha256": "97a49a9bb0cbe1b1b468014f2c91105a07f3bca40ae600f6a269668e0896ffbd",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/metric_utils/quantizer.py",
+      "source_sha256": "6bca199da6a8c80278749d94b51df54865f3a06a52e1c39962c2ccb2a3c21ad1",
+      "packaged_sha256": "6bca199da6a8c80278749d94b51df54865f3a06a52e1c39962c2ccb2a3c21ad1",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/metric_utils/utils/layer.py",
+      "source_sha256": "7cd952015410c9c5bf84a95925d1bbc76d1ca9ff809b11021718ec1ef1913ea0",
+      "packaged_sha256": "7cd952015410c9c5bf84a95925d1bbc76d1ca9ff809b11021718ec1ef1913ea0",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/metric_utils/utils/skeleton.py",
+      "source_sha256": "dfde798642d4b93a70910df484f87e4472c288454d5ec4dca7c9fef52d109af0",
+      "packaged_sha256": "dfde798642d4b93a70910df484f87e4472c288454d5ec4dca7c9fef52d109af0",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/metrics.py",
+      "source_sha256": "c96f200454cd38ff1de268ed62c75914a06ca35f5a5e7bee5f0a3c420068e8cd",
+      "packaged_sha256": "c96f200454cd38ff1de268ed62c75914a06ca35f5a5e7bee5f0a3c420068e8cd",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/mixed_precision.py",
+      "source_sha256": "800f9d4fb75d74b1fbd2c3e37889a0140612b4424ca09cdf8b9637ce89912424",
+      "packaged_sha256": "800f9d4fb75d74b1fbd2c3e37889a0140612b4424ca09cdf8b9637ce89912424",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/optim_factory.py",
+      "source_sha256": "99bcfc20acdfb099f3810cacbc295eae8a95153fd46769714b93402039bdb5f6",
+      "packaged_sha256": "99bcfc20acdfb099f3810cacbc295eae8a95153fd46769714b93402039bdb5f6",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/rotation_conversions.py",
+      "source_sha256": "7e82e7e2662493d393cd3623a23762f5ae84e3dbca2747e848bca63dca869436",
+      "packaged_sha256": "7e82e7e2662493d393cd3623a23762f5ae84e3dbca2747e848bca63dca869436",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/scheduler_factory.py",
+      "source_sha256": "617a000e22e7da46f41ac6b27544c0181f7b4418a4f3effa83280098463196c8",
+      "packaged_sha256": "617a000e22e7da46f41ac6b27544c0181f7b4418a4f3effa83280098463196c8",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/tools.py",
+      "source_sha256": "172e5915416c1cd7f43f5166358360e9f9cf0ded75ab875bcbb530379c061ebd",
+      "packaged_sha256": "172e5915416c1cd7f43f5166358360e9f9cf0ded75ab875bcbb530379c061ebd",
+      "change": "byte-for-byte copy"
+    },
+    {
+      "path": "scripts/trainers/utils/wandb_logger.py",
+      "source_sha256": "8d725cd76a3085e821e4b25f61a330cc989db50b4d08d150ce5916c89d4d6136",
+      "packaged_sha256": "8d725cd76a3085e821e4b25f61a330cc989db50b4d08d150ce5916c89d4d6136",
+      "change": "byte-for-byte copy"
+    }
+  ]
+}

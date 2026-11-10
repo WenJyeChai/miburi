@@ -1,0 +1,4 @@
+# Keep the source dependency list; explicitly include its direct training imports.
+-r requirements.txt
+PyYAML
+scipy
