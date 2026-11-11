@@ -45,6 +45,7 @@ class CompositionChecks(unittest.TestCase):
         self.assertEqual(audit.category_from_label("04_deictic_h"), "deictic")
         self.assertEqual(audit.category_from_label("10_metaphoric_h"), "metaphoric")
         self.assertEqual(audit.category_from_label("metaphorical"), "metaphoric")
+        self.assertEqual(audit.category_from_label("need_cut"), "need_cut")
         with self.assertRaises(ValueError):
             audit.category_from_label("0.4")
         with self.assertRaisesRegex(ValueError, "disagree"):
@@ -85,6 +86,54 @@ class CompositionChecks(unittest.TestCase):
             audit.measure_intervals([audit.Annotation("beat", 3, 2)], 0, 4)
         with self.assertRaises(ValueError):
             audit.measure_intervals([audit.Annotation("beat", 0, float("nan"))], 0, 4)
+
+    def test_need_cut_masks_overlapping_categories_and_merges_exclusions(self):
+        annotations = [
+            audit.Annotation("beat", 0, 10), audit.Annotation("iconic", 2, 7),
+            audit.Annotation("need_cut", 3, 6), audit.Annotation("need_cut", 5, 8),
+            audit.Annotation("need_cut", 20, 21),
+        ]
+        for policy in audit.POLICIES:
+            result = audit.measure_intervals(annotations, 0, 10, policy)
+            self.assertEqual(result["excluded_seconds"], 5)
+            self.assertEqual(result["need_cut_rows"], 3)
+            self.assertEqual(result["gesture_seconds"], 5)
+            self.assertEqual(result["category_union"]["beat"], 5)
+            self.assertEqual(result["category_union"]["iconic"], 1)
+            self.assertAlmostEqual(sum(result["allocated"].values()), 5)
+            self.assertAlmostEqual(sum(result[field] for field in (
+                "gesture_seconds", "explicit_no_gesture_seconds", "unlabeled_seconds", "excluded_seconds",
+            )), 10)
+        result = audit.measure_intervals(annotations, 0, 10)
+        self.assertEqual(result["allocated"]["beat"], 4)
+        self.assertEqual(result["allocated"]["iconic"], 1)
+        clipped = audit.measure_intervals([audit.Annotation("need_cut", -5, 5)], 0, 4)
+        self.assertEqual(clipped["excluded_seconds"], 4)
+        self.assertEqual(clipped["clipped_rows"], 1)
+        self.assertEqual(clipped["unlabeled_seconds"], 0)
+
+    def test_all_cut_recording_has_no_fabricated_proportions(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            sem = root / "sem"
+            sem.mkdir()
+            cache = root / "eval.hdf5"
+            make_cache(cache, [("15_carlos_0_1_1", "test", 4)])
+            (sem / "15_carlos_0_1_1.txt").write_text(
+                "01_beat_align 0 4 4 0.1\nneed_cut 0 4 4 0\n", encoding="utf-8",
+            )
+            args = audit.parse_args(["--eval-hdf5", str(cache), "--annotations-dir", str(sem),
+                                     "--output-dir", str(root / "out"), "--no-plots"])
+            with redirect_stdout(StringIO()):
+                output = audit.run(args)
+            row = read_csv(output / "recording_summary.csv")[0]
+            self.assertEqual(float(row["excluded_seconds"]), 4)
+            self.assertEqual(float(row["gesture_seconds"]), 0)
+            speaker = read_csv(output / "speaker_summary.csv")[0]
+            self.assertEqual(float(speaker["evaluated_seconds"]), 0)
+            self.assertEqual(speaker["beat_fraction"], "")
+            self.assertEqual(speaker["annotation_coverage_fraction"], "")
+            self.assertTrue(all(r["ci95_low"] == "" for r in read_csv(output / "speaker_categories.csv")))
 
     def test_native_txt_csv_and_empty_files(self):
         with TemporaryDirectory() as directory:
@@ -183,7 +232,7 @@ class CompositionChecks(unittest.TestCase):
             make_cache(cache, records)
             for recording_id, _, _ in records:
                 semantic = "07_iconic_h" if "scott" in recording_id else "04_deictic_h"
-                (sem / f"{recording_id}.txt").write_text(f"01_beat_align 0 4 4 0.1\n{semantic} 2 4 2 0.7\n", encoding="utf-8")
+                (sem / f"{recording_id}.txt").write_text(f"01_beat_align 0 4 4 0.1\n{semantic} 2 4 2 0.7\nneed_cut 1 2 1 0\n", encoding="utf-8")
             before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in [cache, *sem.iterdir()]}
             args = audit.parse_args(["--eval-hdf5", str(cache), "--annotations-dir", str(sem),
                                      "--bootstrap", "100", "--permutations", "99", "--output-dir", str(root / "out")])
@@ -196,9 +245,12 @@ class CompositionChecks(unittest.TestCase):
                     self.assertGreater((output / f"{plot}.{extension}").stat().st_size, 1000)
             categories = read_csv(output / "speaker_categories.csv")
             scott = {r["category"]: float(r["fraction_of_gesture_time"]) for r in categories if r["speaker"] == "scott"}
-            self.assertEqual(scott, {"beat": 0.5, "deictic": 0.0, "iconic": 0.5, "metaphoric": 0.0})
+            self.assertEqual(scott, {"beat": 1 / 3, "deictic": 0.0, "iconic": 2 / 3, "metaphoric": 0.0})
             metadata = json.loads((output / "metadata.json").read_text())
             self.assertEqual(metadata["selected_recordings"], 4)
+            self.assertEqual(metadata["excluded_seconds"], 4)
+            self.assertEqual(metadata["need_cut_rows"], 4)
+            self.assertEqual(float(read_csv(output / "speaker_summary.csv")[0]["evaluated_seconds"]), 6)
             test = metadata["exploratory_permutation_test"]
             self.assertEqual(test["status"], "ok")
             self.assertAlmostEqual(test["between_speaker_variance_fraction"], 1)

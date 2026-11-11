@@ -64,6 +64,17 @@ candidate files and conflicting recording entries raise an error. Intervals
 crossing recording bounds are clipped; intervals outside the bounds and
 zero-duration annotations are counted in diagnostics.
 
+`need_cut` is also accepted as a **flagged interval**, following its occurrence
+in the released `15_carlos_0_1_1.txt` annotations. Its formal upstream meaning
+has not been verified, so the script makes a conservative analysis choice:
+exclude that time from the analysis rather than map it to a gesture or to no
+gesture. Exclusions mask all overlapping labels, including beat. Overlapping
+`need_cut` intervals are merged implicitly and clipped to the evaluation bounds.
+They appear as `excluded_seconds` and a separate coverage-plot segment;
+`need_cut_rows` counts source rows, including ones outside evaluation bounds.
+The selected recording bounds and source annotation files are preserved.
+Other unknown labels still raise an error.
+
 The project's dataset downloader retrieves motion/audio/transcript subfolders
 but **does not retrieve `sem/`**. Use the semantic files from your BEAT2 release
 or obtain that subfolder from the
@@ -99,8 +110,8 @@ deictic, giving 75% and 25%. A sensitivity run with
 giving 7 seconds beat and 1 second deictic. Use a different output directory
 for this run. With either policy, total allocated time is 8 seconds.
 
-The script also exports each category's union duration before cross-category
-allocation, and the time with beat/semantic, multiple semantic, or no-gesture/
+The script also exports each category's union duration after flagged-span
+exclusions and before cross-category allocation, and the time with beat/semantic, multiple semantic, or no-gesture/
 gesture conflicts. **Raw category unions may sum above total gesture time; do
 not use them as a 100% stacked composition.** Explicit no-gesture annotations
 are counted only outside the four gesture categories. Unlabeled time is kept
@@ -108,8 +119,10 @@ separate and is not inferred to be beat, rest, or missing motion.
 
 Speaker/cohort compositions pool duration before dividing, so a longer gesture
 interval contributes more than a shorter one. `fraction_of_evaluated_time`
-provides the second denominator: the full duration with available annotation
-files. Coverage tables/plots expose unlabeled time and missing annotation files.
+provides the second denominator: duration with available annotation files minus
+flagged-span exclusions. This is `evaluated_seconds` in `speaker_summary.csv`;
+`selected_seconds` retains the original time bounds. Coverage tables/plots expose
+excluded time, unlabeled time and missing annotation files separately.
 
 ## Outputs
 
@@ -122,16 +135,17 @@ files. Coverage tables/plots expose unlabeled time and missing annotation files.
 - `cohort_categories.csv`: all-selected, Scott and other-speakers-pooled results.
   All-selected includes Scott; these three cohorts are not independent samples.
 - `speaker_composition.png/.pdf`: stacked proportions among labeled gesture time.
-- `annotation_coverage.png/.pdf`: categorized, explicit no-gesture, unlabeled and
-  missing-file time as fractions of selected evaluation duration.
+- `annotation_coverage.png/.pdf`: categorized, explicit no-gesture, unlabeled,
+  excluded `need_cut`, and missing-file time as fractions of selected evaluation duration.
 - `scott_vs_other_speakers.png/.pdf`: pooled comparison, when both groups exist.
 - `metadata.json` and `summary.txt`: settings, selection/script fingerprints,
   statistical assumptions and interpretation.
 
 The default 2,000-replicate bootstrap resamples **whole recordings** within a
 speaker, and reports percentile 95% confidence intervals for the pooled ratio.
-Intervals are omitted with fewer than two recordings or no labeled gesture
-time. Cohort intervals resample recordings within the selected cohort and are
+Intervals are omitted with fewer than two analyzable recordings or no labeled
+gesture time. Fully excluded recordings do not supply bootstrap units. Cohort
+intervals resample recordings within the selected cohort and are
 conditional on the speakers selected; they do not generalize to unseen speakers.
 Use `--bootstrap 0` to disable intervals.
 
