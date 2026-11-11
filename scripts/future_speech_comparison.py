@@ -31,6 +31,7 @@ from scripts import codec_reconstruction_audit as codec_audit
 from miburi.models.gesture_lm_future_control import (
     CONDITIONS, generate_current_codes, speech_views, teacher_forced_logits, temporal_prediction,
 )
+from miburi.utils.compile import no_compile
 
 
 SCOPES = {"all": range(20), "temporal_q0": range(1), "depth": range(1, 20),
@@ -469,7 +470,9 @@ def write_report(output, token_summary, generated_metrics, protocol):
     (output / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+@no_compile()
 def run(cli):
+    """Run eagerly, including the codec/model helpers that compile lazily on CUDA."""
     if cli.token_stride < 1 or cli.min_future_steps < 1 or cli.bootstrap < 0:
         raise ValueError("Invalid token stride, future minimum, or bootstrap count")
     if cli.mode != "tokens" and not cli.device.startswith("cuda"):
@@ -483,6 +486,7 @@ def run(cli):
     device = torch.device(cli.device)
     if device.type == "cuda":
         torch.cuda.set_device(device)
+    print(f"Execution: eager PyTorch on {device}; repository torch.compile helpers disabled.", flush=True)
     overrides = {k: str(v) for k, v in {"beatx_cache_path": cli.eval_hdf5, "beatx_data_path": cli.data_dir,
                  "upperbodycodec_ckpt": cli.upper_codec, "lowerbodycodec_ckpt": cli.lower_codec,
                  "facecodec_ckpt": cli.face_codec}.items() if v is not None}
@@ -522,7 +526,8 @@ def run(cli):
                 "config_sha256": codec_audit._sha256(cli.config), "speaker_map": speaker_map,
                 "speaker_map_source": speaker_map_source, "protocol": protocol,
                 "recordings": len(targets), "donor_pool_recordings": len(infos), "split": cli.split,
-                "torch_version": torch.__version__, "future_scope": "nonoverlapping speech clips; same lower past boundary",
+                "torch_version": torch.__version__, "execution_mode": "eager_pytorch_no_repo_torch_compile",
+                "future_scope": "nonoverlapping speech clips; same lower past boundary",
                 "token_targets": "deterministic canonical codec codes; identical teacher-forced history in all views",
                 "token_weighting": "valid-token micro average; no face multiplier, KL, RVQ soft targets or auxiliary losses",
                 "token_positions": "positions matching token-stride and min-future-steps; identical positions/targets in all views",

@@ -67,6 +67,13 @@ remote server. The runner reuses the existing `scripts/codec_reconstruction_audi
 models, loader and metric helpers. Use the environment already used for model
 evaluation, and run from the repository root.
 
+The runner disables the repository's lazy `torch.compile` helpers for the entire
+evaluation and records `execution_mode` in metadata. CUDA still runs the tensor
+operations; Triton compilation is not required by these helpers. This also avoids
+compiler specialization as the recomputed gesture prefix grows. The scope ends
+when the run returns or raises, leaving other callers' compilation policy intact.
+The checkpoint, attention masks and metric definitions are unchanged.
+
 Replace `YOUR_FOREMOTION_RUN` and the checkpoint filename with the selected
 trained run. **Use that run's saved training config**, including its matching
 codec paths and kinematic weight-sharing setting. The speaker map defaults to
@@ -126,6 +133,27 @@ For a much faster token-only check, use
 `--mode tokens --max-recordings 1 --token-stride 25`. Token-only mode also works
 with `--device cpu`; full generated metrics require CUDA. These partial runs
 are marked in metadata and should not be used as final rebuttal results.
+
+### Triton / GCC compilation failure in older copies
+
+A traceback through `triton/backends/nvidia/driver.py`, `CudaUtils` and
+`compile_module_from_src`, ending in GCC failing to build `cuda_utils.c`, is a
+compiler-path failure. The earlier GCC stderr lines give the actual build or
+link error; `CalledProcessError` alone does not identify which header/library
+or toolchain problem occurred.
+
+Use the updated runner above, or bypass the repository's compiler helpers in
+an older copy by setting this before launching Python:
+
+```bash
+export NO_TORCH_COMPILE=1
+```
+
+Then run the usual command. If a failed attempt already created its output
+folder, select a fresh `--output-dir`, for example
+`reports/future_speech_comparison_scott_eager`. Partial outputs are not resumed.
+This bypass still evaluates on the selected GPU. It does not repair the server's
+Triton compiler environment, which this experiment can run without.
 
 ## Token metrics
 
@@ -225,5 +253,5 @@ python -B -m scripts.smoke_test_future_speech_comparison
 The checks use tiny synthetic networks/data to verify causal/teacher equivalence,
 no correct-future leakage in the mismatch view, identity-donor controls, common
 sampling, donor selection, CE arithmetic, paired bootstrap, strict checkpoint
-loading, legacy trainer compatibility, original-training speaker-map recovery
+loading, lazy-compilation bypass and restoration, legacy trainer compatibility, original-training speaker-map recovery
 and full runner exports. They do not reproduce remote dataset scores.

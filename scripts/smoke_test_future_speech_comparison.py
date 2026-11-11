@@ -8,6 +8,7 @@ from io import StringIO
 import json
 import math
 import hashlib
+import os
 import sys
 import types
 from pathlib import Path
@@ -28,6 +29,8 @@ from miburi.models.gesture_lm_future_control import (
     temporal_prediction, view_attention_bias,
 )
 from miburi.models import gesture_lm_future_control as controls
+import miburi.utils.compile as compile_utils
+from miburi.utils.compile import torch_compile_lazy
 from scripts.smoke_test_gesture_lm_offline import _model_kwargs
 from scripts import future_speech_comparison as experiment
 
@@ -60,6 +63,28 @@ def current_logits(model, codes, audio, text, donor_audio, donor_text, step, cli
 
 
 class FutureSpeechChecks(unittest.TestCase):
+    def test_runner_bypasses_lazy_compile_and_restores_policy_on_failure(self):
+        cli = experiment.parse_args(["--config", "unused.yaml", "--checkpoint", "unused.safetensors",
+                                     "--eval-hdf5", "unused.hdf5", "--mode", "tokens", "--device", "cpu"])
+        with patch.dict(os.environ, {"NO_TORCH_COMPILE": ""}):
+            @torch_compile_lazy
+            def probe(value):
+                return value.square() + 1
+
+        previous = compile_utils._compile_disabled
+
+        def check_before_loading_assets(settings):
+            self.assertTrue(compile_utils._compile_disabled)
+            torch.testing.assert_close(probe(torch.tensor([2.0])), torch.tensor([5.0]))
+            raise RuntimeError("intentional eager probe stop")
+
+        with patch.object(torch, "compile", side_effect=AssertionError("Compiler must not be invoked")) as compiler, \
+             patch.object(experiment.codec_audit, "parse_lm_config", side_effect=check_before_loading_assets), \
+             redirect_stdout(StringIO()), self.assertRaisesRegex(RuntimeError, "intentional eager probe stop"):
+            experiment.run(cli)
+        compiler.assert_not_called()
+        self.assertEqual(compile_utils._compile_disabled, previous)
+
     def test_training_provenance_accepts_global_without_relabelling_the_experiment(self):
         for trainer in ("UpperFaceLowerGTDM3ConditionCRegretRVQ", "UpperFaceLowerGTDM3SharedRegretRVQ",
                         "UpperFaceLowerGTDM3SharedRegret"):
@@ -382,6 +407,7 @@ class FutureSpeechChecks(unittest.TestCase):
                 self.dataset_len = 0
 
             def update(self, values):
+                assert compile_utils._compile_disabled
                 assert values["tar_beta"].shape == (300,)
                 assert values["rec_pose"].shape == values["tar_pose"].shape == (8, 165)
                 assert values["rec_exps"].shape == (8, 100)
@@ -435,6 +461,7 @@ class FutureSpeechChecks(unittest.TestCase):
             self.assertEqual(metadata["status"], "complete")
             self.assertEqual(metadata["recordings"], 2)
             self.assertEqual(metadata["split"], "test")
+            self.assertEqual(metadata["execution_mode"], "eager_pytorch_no_repo_torch_compile")
             import csv
             with (output / "token_summary.csv").open() as handle:
                 summary = list(csv.DictReader(handle))
