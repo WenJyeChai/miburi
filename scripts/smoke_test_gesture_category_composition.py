@@ -112,6 +112,49 @@ class CompositionChecks(unittest.TestCase):
         self.assertEqual(clipped["clipped_rows"], 1)
         self.assertEqual(clipped["unlabeled_seconds"], 0)
 
+    def test_unique_extra_labels_have_separate_union_durations(self):
+        result = audit.measure_intervals([
+            audit.Annotation("beat", 0, 10),
+            audit.Annotation("self_touch", 1, 4), audit.Annotation("self_touch", 2, 5),
+            audit.Annotation("self_touch", 20, 21),
+            audit.Annotation("another_label", 3, 7), audit.Annotation("need_cut", 8, 9),
+        ], 0, 10)
+        extras = {r["label"]: r for r in result["extra_labels"]}
+        self.assertEqual(extras["self_touch"], {"label": "self_touch", "source_rows": 3, "in_scope_rows": 2, "union_seconds": 4})
+        self.assertEqual(extras["another_label"]["union_seconds"], 4)
+        self.assertEqual(extras["need_cut"]["union_seconds"], 1)
+        self.assertEqual(result["excluded_seconds"], 7)
+        self.assertEqual(result["allocated"]["beat"], 3)
+        self.assertEqual(result["extra_label_rows"], 5)
+        # Raw unions for different labels can overlap; their combined union
+        # remains the single exclusion used by the main-category analysis.
+        self.assertEqual(sum(r["union_seconds"] for r in result["extra_labels"]), 9)
+        rows = [
+            {"recording_id": "one", "speaker": "scott", **extras["self_touch"]},
+            {"recording_id": "two", "speaker": "scott", **extras["self_touch"]},
+            {"recording_id": "three", "speaker": "wayne", **extras["self_touch"]},
+        ]
+        speakers, totals = audit.summarize_extra_labels(rows)
+        self.assertEqual(speakers[0]["union_seconds"], 8)
+        self.assertEqual(speakers[0]["recordings"], 2)
+        self.assertEqual(totals["self_touch"]["union_seconds"], 12)
+
+    def test_unknown_label_policy_continues_without_hiding_malformed_rows(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "extras.txt"
+            path.write_text("self_touch 1 4 3 0\n11_custom 4 5 1 0\n", encoding="utf-8")
+            self.assertEqual(audit.load_annotations(path), [
+                audit.Annotation("self_touch", 1, 4), audit.Annotation("11_custom", 4, 5),
+            ])
+            with self.assertRaisesRegex(ValueError, "Unknown gesture label"):
+                audit.load_annotations(path, "error")
+            path.write_text("self_touch 1 nan 3 0\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "nonfinite"):
+                audit.load_annotations(path)
+            path.write_text("04_iconic_h 1 4 3 0\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "disagree"):
+                audit.load_annotations(path)
+
     def test_all_cut_recording_has_no_fabricated_proportions(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -220,6 +263,8 @@ class CompositionChecks(unittest.TestCase):
             wayne = next(r for r in summary if r["speaker"] == "wayne")
             self.assertEqual(wayne["beat_fraction"], "")
             self.assertEqual(wayne["missing_recordings"], "1")
+            self.assertEqual(read_csv(output / "extra_labels_by_recording.csv"), [])
+            self.assertEqual(read_csv(output / "extra_labels_by_speaker.csv"), [])
 
     def test_end_to_end_tables_plots_and_input_integrity(self):
         with TemporaryDirectory() as directory:
@@ -232,7 +277,7 @@ class CompositionChecks(unittest.TestCase):
             make_cache(cache, records)
             for recording_id, _, _ in records:
                 semantic = "07_iconic_h" if "scott" in recording_id else "04_deictic_h"
-                (sem / f"{recording_id}.txt").write_text(f"01_beat_align 0 4 4 0.1\n{semantic} 2 4 2 0.7\nneed_cut 1 2 1 0\n", encoding="utf-8")
+                (sem / f"{recording_id}.txt").write_text(f"01_beat_align 0 4 4 0.1\n{semantic} 2 4 2 0.7\nneed_cut 1 2 1 0\nself_touch 0 0.5 0.5 0\n", encoding="utf-8")
             before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in [cache, *sem.iterdir()]}
             args = audit.parse_args(["--eval-hdf5", str(cache), "--annotations-dir", str(sem),
                                      "--bootstrap", "100", "--permutations", "99", "--output-dir", str(root / "out")])
@@ -245,12 +290,20 @@ class CompositionChecks(unittest.TestCase):
                     self.assertGreater((output / f"{plot}.{extension}").stat().st_size, 1000)
             categories = read_csv(output / "speaker_categories.csv")
             scott = {r["category"]: float(r["fraction_of_gesture_time"]) for r in categories if r["speaker"] == "scott"}
-            self.assertEqual(scott, {"beat": 1 / 3, "deictic": 0.0, "iconic": 2 / 3, "metaphoric": 0.0})
+            self.assertEqual(scott, {"beat": 0.2, "deictic": 0.0, "iconic": 0.8, "metaphoric": 0.0})
             metadata = json.loads((output / "metadata.json").read_text())
             self.assertEqual(metadata["selected_recordings"], 4)
-            self.assertEqual(metadata["excluded_seconds"], 4)
+            self.assertEqual(metadata["excluded_seconds"], 6)
             self.assertEqual(metadata["need_cut_rows"], 4)
-            self.assertEqual(float(read_csv(output / "speaker_summary.csv")[0]["evaluated_seconds"]), 6)
+            self.assertEqual(metadata["extra_label_rows"], 8)
+            self.assertEqual(metadata["extra_label_totals"]["self_touch"]["union_seconds"], 2)
+            self.assertEqual(float(read_csv(output / "speaker_summary.csv")[0]["evaluated_seconds"]), 5)
+            extra_recordings = read_csv(output / "extra_labels_by_recording.csv")
+            extra_speakers = read_csv(output / "extra_labels_by_speaker.csv")
+            self.assertEqual(len(extra_recordings), 8)
+            self.assertEqual(len(extra_speakers), 4)
+            scott_extra = next(r for r in extra_speakers if r["speaker"] == "scott" and r["label"] == "self_touch")
+            self.assertEqual(float(scott_extra["union_seconds"]), 1)
             test = metadata["exploratory_permutation_test"]
             self.assertEqual(test["status"], "ok")
             self.assertAlmostEqual(test["between_speaker_variance_fraction"], 1)

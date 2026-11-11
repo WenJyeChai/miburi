@@ -59,8 +59,9 @@ times. The HDF5 motion duration uses its stored motion rate (fallback 25 fps).
 Per-recording `.csv` or `.tsv` files also work, with headers
 `category,start_seconds,end_seconds` or `types,start,end`. Use the same recording
 ID as the filename. Explicit numeric type IDs 0--10 and category names are
-accepted. Unknown labels, nonfinite timestamps, reversed intervals, duplicate
-candidate files and conflicting recording entries raise an error. Intervals
+accepted. Unmapped labels are reported separately by default. Nonfinite
+timestamps, reversed intervals, inconsistent type IDs/names, duplicate candidate
+files and conflicting recording entries raise an error. Intervals
 crossing recording bounds are clipped; intervals outside the bounds and
 zero-duration annotations are counted in diagnostics.
 
@@ -73,7 +74,20 @@ gesture. Exclusions mask all overlapping labels, including beat. Overlapping
 They appear as `excluded_seconds` and a separate coverage-plot segment;
 `need_cut_rows` counts source rows, including ones outside evaluation bounds.
 The selected recording bounds and source annotation files are preserved.
-Other unknown labels still raise an error.
+
+The default `--unknown-labels separate` applies the same time exclusion to
+other non-standard labels and measures each distinct label separately, so a
+new annotation label does not interrupt the whole audit. Label strings are
+trimmed and lowercased for grouping. The script makes no assumption about
+what an unmapped label means. For example, two `self_touch` intervals covering
+seconds 1--4 and 2--5 contribute **4 seconds**, rather than 6, to that label's
+separate table. If a different extra label covers seconds 3--7, it contributes
+4 seconds to its own table; their **combined exclusion is 6 seconds**. Per-label
+durations may overlap across labels and must not be summed as exclusive time.
+
+For strict label validation, pass `--unknown-labels error`; the explicitly
+recognized `need_cut` flag remains supported. Both modes still reject malformed
+timestamps and contradictions between a known type ID and its category name.
 
 The project's dataset downloader retrieves motion/audio/transcript subfolders
 but **does not retrieve `sem/`**. Use the semantic files from your BEAT2 release
@@ -128,15 +142,23 @@ excluded time, unlabeled time and missing annotation files separately.
 
 - `selected_recordings.csv`: exact selected IDs, speakers and time bounds.
 - `recording_summary.csv`: per-recording allocated seconds, raw unions, overlap,
-  coverage, source annotation hashes and missing-file status.
+  coverage, extra-label row counts, source annotation hashes and missing-file status.
 - `speaker_summary.csv`: counts, exposure, coverage and four category proportions.
 - `speaker_categories.csv`: one row per speaker/category, with seconds,
   proportions and bootstrap confidence intervals.
 - `cohort_categories.csv`: all-selected, Scott and other-speakers-pooled results.
   All-selected includes Scott; these three cohorts are not independent samples.
+- `extra_labels_by_recording.csv`: each non-standard label's source-row count,
+  number of positive-duration rows intersecting the evaluated time bounds, and
+  union duration in seconds, per recording.
+- `extra_labels_by_speaker.csv`: those counts and durations pooled by speaker
+  and label, with counts of recordings containing the label and positive label time.
+  Both files include headers even when no extra labels occur. Source-row counts
+  include rows outside evaluation bounds; union durations use only the evaluated
+  interval. `metadata.json` also contains overall totals per extra label.
 - `speaker_composition.png/.pdf`: stacked proportions among labeled gesture time.
 - `annotation_coverage.png/.pdf`: categorized, explicit no-gesture, unlabeled,
-  excluded `need_cut`, and missing-file time as fractions of selected evaluation duration.
+  non-standard-label, and missing-file time as fractions of selected evaluation duration.
 - `scott_vs_other_speakers.png/.pdf`: pooled comparison, when both groups exist.
 - `metadata.json` and `summary.txt`: settings, selection/script fingerprints,
   statistical assumptions and interpretation.

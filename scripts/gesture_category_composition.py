@@ -33,6 +33,12 @@ RATIOS = (
     "full_beatx_fulllength", "scott_beatx_fulllength",
     "goodspk_beatx_fulllength", "full_beatx_eval",
 )
+EXTRA_RECORD_FIELDS = ("recording_id", "speaker", "label", "source_rows", "in_scope_rows", "union_seconds")
+EXTRA_SPEAKER_FIELDS = ("speaker", "label", "recordings", "recordings_with_time", "source_rows", "in_scope_rows", "union_seconds")
+
+
+class UnknownGestureLabel(ValueError):
+    """An unmapped label that may be audited separately from known categories."""
 
 
 @dataclass(frozen=True)
@@ -80,7 +86,7 @@ def category_from_label(label: str) -> str:
     if match:
         number = int(match.group(1))
         if not 0 <= number <= 10:
-            raise ValueError(f"Unknown BEAT type ID in {label!r}")
+            raise UnknownGestureLabel(f"Unknown BEAT type ID in {label!r}")
         coded = (
             "none" if number == 0 else "beat" if number == 1 else
             "deictic" if number <= 4 else "iconic" if number <= 7 else "metaphoric"
@@ -94,7 +100,7 @@ def category_from_label(label: str) -> str:
         return coded
     if label in {"none", "no_gesture", "no gesture", "no-gesture", "silence", "rest"}:
         return "none"
-    raise ValueError(f"Unknown gesture label {label!r}")
+    raise UnknownGestureLabel(f"Unknown gesture label {label!r}")
 
 
 def _table(path: Path) -> list[dict]:
@@ -112,7 +118,9 @@ def _field(row: dict, *names: str, default=None):
     return next((row[n] for n in names if row.get(n) not in (None, "")), default)
 
 
-def load_annotations(path: Path) -> list[Annotation]:
+def load_annotations(path: Path, unknown_labels: str = "separate") -> list[Annotation]:
+    if unknown_labels not in {"separate", "error"}:
+        raise ValueError(f"Unknown label-handling policy {unknown_labels!r}")
     if path.suffix.lower() in {".csv", ".tsv"}:
         rows = [
             (i, _field(row, "category", "type", "types", "label"),
@@ -136,7 +144,14 @@ def load_annotations(path: Path) -> list[Annotation]:
         try:
             if label is None:
                 raise ValueError("missing category/type column")
-            category = category_from_label(label)
+            try:
+                category = category_from_label(label)
+            except UnknownGestureLabel:
+                if unknown_labels == "error":
+                    raise
+                category = label.strip().casefold()
+                if not category:
+                    raise ValueError("empty gesture label")
             start = finite_float(start, "start timestamp")
             end = finite_float(end, "end timestamp")
             if end < start:
@@ -157,9 +172,13 @@ def measure_intervals(annotations: list[Annotation], start: float, end: float,
     events = defaultdict(Counter)
     events[start]; events[end]
     clipped = outside = zero_length = 0
+    source_counts = Counter(a.category for a in annotations)
+    extra_labels = sorted(set(source_counts) - {*CATEGORIES, "none"})
+    extra_union = dict.fromkeys(extra_labels, 0.0)
+    in_scope_counts = Counter()
     for annotation in annotations:
-        if annotation.category not in {*CATEGORIES, "none", *EXCLUDED_LABELS}:
-            raise ValueError(f"Unknown category {annotation.category!r}")
+        if not isinstance(annotation.category, str) or not annotation.category.strip():
+            raise ValueError("Annotation category must be a nonempty string")
         if not math.isfinite(annotation.start) or not math.isfinite(annotation.end):
             raise ValueError("Nonfinite annotation timestamp")
         if annotation.end < annotation.start:
@@ -172,6 +191,7 @@ def measure_intervals(annotations: list[Annotation], start: float, end: float,
             outside += 1
             continue
         clipped += (lo != annotation.start or hi != annotation.end)
+        in_scope_counts[annotation.category] += 1
         events[lo][annotation.category] += 1
         events[hi][annotation.category] -= 1
     allocated = dict.fromkeys(CATEGORIES, 0.0)
@@ -187,9 +207,12 @@ def measure_intervals(annotations: list[Annotation], start: float, end: float,
         duration = timestamp - previous
         categories = {c for c in CATEGORIES if active[c] > 0}
         semantic = categories - {"beat"}
-        if any(active[label] > 0 for label in EXCLUDED_LABELS):
-            # Mask rather than just dropping the row: a broad overlapping
-            # beat interval must not reclassify a span flagged need_cut.
+        active_extra = [label for label in extra_labels if active[label] > 0]
+        for label in active_extra:
+            extra_union[label] += duration
+        if active_extra:
+            # Extra labels are measured separately. Their combined union is
+            # masked from the four-category analysis, including overlaps.
             diagnostics["excluded_seconds"] += duration
         elif categories:
             diagnostics["gesture_seconds"] += duration
@@ -224,6 +247,12 @@ def measure_intervals(annotations: list[Annotation], start: float, end: float,
         "annotation_rows": len(annotations), "clipped_rows": clipped,
         "outside_rows": outside, "zero_length_rows": zero_length,
         "need_cut_rows": sum(a.category == "need_cut" for a in annotations),
+        "extra_label_rows": sum(source_counts[label] for label in extra_labels),
+        "extra_labels": [
+            {"label": label, "source_rows": source_counts[label],
+             "in_scope_rows": in_scope_counts[label], "union_seconds": extra_union[label]}
+            for label in extra_labels
+        ],
     }
 
 
@@ -368,6 +397,7 @@ def summarize(rows: list[dict], bootstrap: int, seed: int) -> tuple[list, list]:
             "selected_seconds": sum(r["evaluation_seconds"] for r in members),
             "excluded_seconds": excluded,
             "need_cut_rows": sum(r["need_cut_rows"] for r in valid),
+            "extra_label_rows": sum(r["extra_label_rows"] for r in valid),
             "missing_annotation_seconds": sum(r["evaluation_seconds"] for r in members if r["status"] == "missing"),
             "evaluated_seconds": exposure, "gesture_seconds": gesture,
             "gesture_fraction_of_evaluated_time": _safe_ratio(gesture, exposure),
@@ -454,9 +484,29 @@ def permutation_test(rows: list[dict], permutations: int, seed: int) -> dict:
     }
 
 
-def write_csv(path: Path, rows: list[dict]) -> None:
+def summarize_extra_labels(rows: list[dict]) -> tuple[list[dict], dict]:
+    """Pool within-recording label unions, retaining an explicit label axis."""
+    groups = defaultdict(list)
+    totals = defaultdict(lambda: {"recordings": 0, "source_rows": 0, "in_scope_rows": 0, "union_seconds": 0.0})
+    for row in rows:
+        groups[(row["speaker"], row["label"])].append(row)
+        total = totals[row["label"]]
+        total["recordings"] += 1
+        for field in ("source_rows", "in_scope_rows", "union_seconds"):
+            total[field] += row[field]
+    by_speaker = []
+    for (speaker, label), members in sorted(groups.items()):
+        by_speaker.append({
+            "speaker": speaker, "label": label, "recordings": len(members),
+            "recordings_with_time": sum(row["union_seconds"] > 0 for row in members),
+            **{field: sum(row[field] for row in members) for field in ("source_rows", "in_scope_rows", "union_seconds")},
+        })
+    return by_speaker, dict(sorted(totals.items()))
+
+
+def write_csv(path: Path, rows: list[dict], fieldnames=None) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer = csv.DictWriter(handle, fieldnames=fieldnames or list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
 
@@ -498,7 +548,7 @@ def plot_results(output: Path, speakers: list[dict], cohorts: list[dict]) -> Non
         ("gesture_seconds", "Categorized gesture", "#648FFF"),
         ("explicit_no_gesture_seconds", "Explicit no gesture", "#A2C6A2"),
         ("unlabeled_seconds", "Unlabeled time", "#D4D4D4"),
-        ("excluded_seconds", "Excluded: need_cut", "#FFB000"),
+        ("excluded_seconds", "Non-standard labels", "#FFB000"),
         ("missing_annotation_seconds", "Missing annotation file", "#DC267F"),
     ):
         values = np.array([
@@ -542,6 +592,7 @@ def run(args) -> Path:
         if path.is_file() and path.suffix.lower() in {".txt", ".csv", ".tsv"}:
             candidates[path.stem].append(path)
     rows = []
+    extra_rows = []
     for recording in recordings:
         paths = candidates[recording.recording_id]
         if len(paths) > 1:
@@ -554,12 +605,16 @@ def run(args) -> Path:
             stats = None
         else:
             path = paths[0]
-            stats = measure_intervals(load_annotations(path), recording.start_seconds, recording.end_seconds, args.overlap_policy)
+            stats = measure_intervals(load_annotations(path, args.unknown_labels), recording.start_seconds, recording.end_seconds, args.overlap_policy)
+            extra_rows.extend(
+                {"recording_id": recording.recording_id, "speaker": recording.speaker, **extra}
+                for extra in stats["extra_labels"]
+            )
             row.update(status="annotated", annotation_path=str(path.resolve()), annotation_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
         for field in (
             "gesture_seconds", "explicit_no_gesture_seconds", "unlabeled_seconds", "excluded_seconds",
             "cross_category_overlap_seconds", "beat_semantic_overlap_seconds", "semantic_category_overlap_seconds",
-            "none_gesture_conflict_seconds", "annotation_rows", "clipped_rows", "outside_rows", "zero_length_rows", "need_cut_rows",
+            "none_gesture_conflict_seconds", "annotation_rows", "clipped_rows", "outside_rows", "zero_length_rows", "need_cut_rows", "extra_label_rows",
         ):
             row[field] = stats[field] if stats is not None else None
         for category in CATEGORIES:
@@ -571,6 +626,7 @@ def run(args) -> Path:
     speakers, categories = summarize(rows, args.bootstrap, args.seed)
     cohorts = cohort_summary(rows, args.bootstrap, args.seed)
     test = permutation_test(rows, args.permutations, args.seed)
+    extra_speakers, extra_totals = summarize_extra_labels(extra_rows)
     output = args.output_dir or Path("reports") / f"gesture_composition_{datetime.now():%Y%m%d_%H%M%S_%f}"
     if output.exists() and any(output.iterdir()):
         raise ValueError(f"Output directory is not empty: {output}; choose a new directory")
@@ -580,6 +636,8 @@ def run(args) -> Path:
     write_csv(output / "speaker_categories.csv", categories)
     write_csv(output / "cohort_categories.csv", cohorts)
     write_csv(output / "selected_recordings.csv", [asdict(r) for r in recordings])
+    write_csv(output / "extra_labels_by_recording.csv", extra_rows, EXTRA_RECORD_FIELDS)
+    write_csv(output / "extra_labels_by_speaker.csv", extra_speakers, EXTRA_SPEAKER_FIELDS)
     source = args.eval_hdf5 or args.manifest
     metadata = {
         "created_at": datetime.now().astimezone().isoformat(),
@@ -588,12 +646,15 @@ def run(args) -> Path:
         "selected_recordings_sha256": hashlib.sha256((output / "selected_recordings.csv").read_bytes()).hexdigest(),
         "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "numpy_version": np.__version__, "overlap_policy": args.overlap_policy,
-        "composition_denominator": "Union of time labeled as at least one of the four gesture categories, after need_cut exclusions; excludes none and unlabeled time",
-        "evaluation_time_denominator": "Duration with annotation files available, minus the union of need_cut spans",
-        "excluded_interval_labels": sorted(EXCLUDED_LABELS),
-        "excluded_interval_policy": "Conservative analysis choice: mask flagged spans before category allocation, including overlapping gesture labels; no formal upstream definition of need_cut was verified",
+        "composition_denominator": "Union of time labeled as at least one of the four gesture categories, after excluding non-standard-label spans; excludes none and unlabeled time",
+        "evaluation_time_denominator": "Duration with annotation files available, minus the combined union of non-standard-label spans",
+        "excluded_interval_labels": list(extra_totals),
+        "excluded_interval_policy": "Non-standard labels are measured separately; their combined union masks the main categories, including overlapping gesture labels",
+        "extra_label_totals": extra_totals,
+        "extra_label_duration_definition": "Per-label union of intervals clipped to evaluation bounds; durations of different extra labels may overlap and should not be summed as exclusive time",
         "excluded_seconds": sum(s["excluded_seconds"] for s in speakers),
         "need_cut_rows": sum(s["need_cut_rows"] for s in speakers),
+        "extra_label_rows": sum(s["extra_label_rows"] for s in speakers),
         "weighting": "Duration pooled within each speaker/cohort; cohorts may include the same recordings",
         "intervals": "Half-open [start,end), clipped to evaluation bounds; same-category duplicates count once",
         "confidence_intervals": "95% percentile bootstrap, whole recordings resampled within each speaker (or within pooled cohort); unavailable with fewer than two recordings",
@@ -608,7 +669,7 @@ def run(args) -> Path:
         f"Selected {len(recordings)} recordings across {len(speakers)} speakers.",
         f"Annotation files found: {metadata['annotated_recordings']}/{len(recordings)}.",
         f"Overlap policy: {args.overlap_policy}. Fractions are within annotated gesture time.",
-        f"Excluded need_cut spans: {metadata['excluded_seconds']:.3f} seconds ({metadata['need_cut_rows']} source rows).",
+        f"Non-standard spans: {metadata['excluded_seconds']:.3f} seconds ({metadata['extra_label_rows']} source rows; {len(extra_totals)} labels), reported separately.",
         "Allocated seconds sum to the gesture-time union. Category-union columns can overlap; do not stack them.",
         "Unlabeled time is not assumed to be beat or no gesture. Empty files yield zero labeled time.",
         "Bootstrap units are complete recordings, not frames; cohort intervals describe the selected speaker set.",
@@ -635,6 +696,8 @@ def parse_args(argv=None):
     parser.add_argument("--motion-fps", type=float, default=25, help="Fallback if HDF5 has no motion_fps attribute")
     parser.add_argument("--overlap-policy", choices=POLICIES, default="semantic-over-beat")
     parser.add_argument("--missing-annotations", choices=("error", "skip"), default="error")
+    parser.add_argument("--unknown-labels", choices=("separate", "error"), default="separate",
+                        help="Report unmapped labels separately (default), or reject them; need_cut is always reported separately")
     parser.add_argument("--bootstrap", type=int, default=2000, help="Recording bootstrap replicates; 0 disables intervals")
     parser.add_argument("--permutations", type=int, default=0, help="Optional exploratory recording-level omnibus test")
     parser.add_argument("--seed", type=int, default=2342)
