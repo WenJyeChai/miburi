@@ -14,6 +14,16 @@ The script includes both teacher-forced token prediction and autoregressive
 generated-motion evaluation. It constructs no optimizer and requires no Moshi
 download: speech embedding weights come directly from the supplied checkpoint.
 
+The supported training configs are `UpperFaceLowerGTDM3ConditionCRegretRVQ`,
+`UpperFaceLowerGTDM3SharedRegretRVQ` and `UpperFaceLowerGTDM3SharedRegret`.
+Keep the checkpoint's original saved config; do not change its trainer name to
+pass validation. All three use the compatible causal GTDM3 generator. For a
+GlobalRegret checkpoint, training used full-clip speech attention in its teacher
+view, whereas this comparison uses **Condition C at evaluation** to keep past
+access identical. Its future views therefore do not reproduce the original
+GlobalRegret teacher mask. The console, `metadata.json` and `report.md` record
+this distinction so it remains visible in rebuttal results.
+
 ## Exact intervention
 
 The default future scope is the **training clip length**, obtained from the
@@ -61,7 +71,14 @@ Replace `YOUR_FOREMOTION_RUN` and the checkpoint filename with the selected
 trained run. **Use that run's saved training config**, including its matching
 codec paths and kinematic weight-sharing setting. The speaker map defaults to
 `speaker_id_to_index.json` beside the checkpoint. Supply `--speaker-map` if it
-is elsewhere. Do not rebuild speaker indices from a filtered evaluation subset.
+is elsewhere. If an older run has no saved map, the script recovers the mapping
+with the original training config and original training-cache metadata, before
+any evaluation-cache or speaker-subset overrides. This requires the unchanged
+training HDF5 at its saved path. No motion is loaded and no map/cache is written
+during recovery. If that cache is unavailable, provide the original map with
+`--speaker-map`. A single-speaker run can still have a nonzero speaker index:
+the loader anchors indices on the broader BEATX source before selecting Scott.
+Do not infer indices from a filtered evaluation subset or assume Scott is zero.
 
 ```bash
 CUDA_VISIBLE_DEVICES=2 \
@@ -182,7 +199,8 @@ each condition/seed, not averaged from per-recording FGD values.
 - `generated_tokens/<seed>/<recording>.npz`: codes for all three conditions.
 - With `--save-motion`, `generated_motion/` stores generated poses, expressions,
   translations and references for subsequent rendering. It does not render videos.
-- `metadata.json`: checkpoint/config hashes, speaker map, complete settings,
+- `metadata.json`: checkpoint/config hashes, training/evaluation attention
+  protocols, speaker map and its source, complete settings,
   versions, timing, and run status. Token totals and generated codes are written
   progressively; automatic resume is not implemented. Use a new output directory
   for each run.
@@ -207,4 +225,5 @@ python -B -m scripts.smoke_test_future_speech_comparison
 The checks use tiny synthetic networks/data to verify causal/teacher equivalence,
 no correct-future leakage in the mismatch view, identity-donor controls, common
 sampling, donor selection, CE arithmetic, paired bootstrap, strict checkpoint
-loading and full runner exports. They do not reproduce remote dataset scores.
+loading, legacy trainer compatibility, original-training speaker-map recovery
+and full runner exports. They do not reproduce remote dataset scores.

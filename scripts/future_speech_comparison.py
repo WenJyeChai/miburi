@@ -37,6 +37,72 @@ SCOPES = {"all": range(20), "temporal_q0": range(1), "depth": range(1, 20),
           "upper_hands": range(8), "lower": range(8, 16), "face": range(16, 20)}
 
 
+def checkpoint_protocol(config):
+    """Separate the checkpoint's training view from this controlled intervention."""
+    policies = {
+        "UpperFaceLowerGTDM3ConditionCRegretRVQ": "condition_c_rolling_past_plus_future",
+        "UpperFaceLowerGTDM3SharedRegretRVQ": "global_regret_full_clip_speech",
+        "UpperFaceLowerGTDM3SharedRegret": "global_regret_full_clip_speech",
+    }
+    if config.trainer not in policies:
+        raise ValueError(
+            f"Unsupported trainer {config.trainer!r}. Supply a shared-weight GTDM3 "
+            "ConditionCRegretRVQ, SharedRegretRVQ, or SharedRegret checkpoint with "
+            "its original saved training config."
+        )
+    note = (
+        "This checkpoint was trained with GlobalRegret full-clip speech attention. "
+        "Evaluation uses the same rolling past boundary in all three views "
+        "(Condition C); the future views do not reproduce its original GlobalRegret teacher mask."
+        if policies[config.trainer].startswith("global_regret") else None
+    )
+    return {"training_trainer": config.trainer, "training_teacher_attention": policies[config.trainer],
+            "evaluation_attention": "condition_c_identical_rolling_past_plus_controlled_future",
+            "interpretation_note": note}
+
+
+def load_speaker_map(cli):
+    """Prefer a saved map; recover legacy maps only from original training metadata."""
+    path = cli.speaker_map or cli.checkpoint.parent / "speaker_id_to_index.json"
+    if path.is_file():
+        mapping = json.loads(path.read_text(encoding="utf-8"))
+        source = {"kind": "saved_json", "path": str(path.resolve()), "sha256": codec_audit._sha256(path)}
+    elif cli.speaker_map is not None:
+        raise FileNotFoundError(f"Speaker map not found: {path}")
+    else:
+        # Parse afresh: evaluation overrides must never enter speaker recovery.
+        original = codec_audit.parse_lm_config(codec_audit.AuditSettings(lm_config=str(cli.config)))
+        ratio = original.dataset_ratio.lower()
+        if original.dataset != "unified" or "beatx" not in ratio:
+            raise ValueError("Missing speaker_id_to_index.json; supply --speaker-map from the original training run")
+        required = {"beatx": original.beatx_cache_path}
+        if "embody" in ratio:
+            required["embody3d"] = original.embody3d_cache_path
+        missing = [value or name for name, value in required.items() if not value or not Path(value).is_file()]
+        if missing:
+            raise ValueError(
+                "Missing speaker_id_to_index.json and original training cache(s): "
+                + ", ".join(missing)
+                + ". Supply --speaker-map from the original training run; do not infer indices from the evaluation subset."
+            )
+        module, _, _ = codec_audit._data_modules(ROOT)
+        training = module.UNIFIEDDataset(original, "train", only_motion=True,
+                                         dataset_ratio=original.dataset_ratio, debug=False,
+                                         varying_frame_length=False)
+        try:
+            mapping = dict(training.speaker_id_to_index)
+        finally:
+            training.close()
+        source = {"kind": "reconstructed_from_original_training_cache", "training_dataset_ratio": original.dataset_ratio,
+                  "training_caches": required}
+        print("No saved speaker map; recovered speaker indices from the original training cache metadata.", flush=True)
+    if (not isinstance(mapping, dict) or not mapping
+            or any(not isinstance(k, str) or type(v) is not int or v < 0 for k, v in mapping.items())
+            or len(set(mapping.values())) != len(mapping)):
+        raise ValueError("Speaker map must contain distinct nonnegative integer indices keyed by speaker name")
+    return mapping, source
+
+
 def write_csv(path, rows):
     if not rows:
         return
@@ -370,7 +436,7 @@ def evaluate_recording(model, codecs, sample, info, all_infos, plan, config, cli
     return totals, generated if generation else None, coverage
 
 
-def write_report(output, token_summary, generated_metrics):
+def write_report(output, token_summary, generated_metrics, protocol):
     combined = []
     for condition in CONDITIONS:
         row = {"condition": condition}
@@ -385,7 +451,11 @@ def write_report(output, token_summary, generated_metrics):
         combined.append(row)
     write_csv(output / "side_by_side.csv", combined)
     columns = ("condition", "ce_all", "accuracy_all", "ce_temporal_q0", "accuracy_temporal_q0", "fgd", "beat_alignment", "facial_l2", "expression_mse")
-    lines = ["# Fixed-checkpoint future-speech comparison", "", "| " + " | ".join(columns) + " |",
+    lines = ["# Fixed-checkpoint future-speech comparison", "",
+             f"Training trainer: `{protocol['training_trainer']}`. Evaluation: Condition C with identical rolling past access.", ""]
+    if protocol["interpretation_note"]:
+        lines += [protocol["interpretation_note"], ""]
+    lines += ["| " + " | ".join(columns) + " |",
              "| " + " | ".join("---" for _ in columns) + " |"]
     for row in combined:
         lines.append("| " + " | ".join(str(row[c]) if c == "condition" else f"{row[c]:.6f}" if row[c] is not None else "" for c in columns) + " |")
@@ -418,8 +488,9 @@ def run(cli):
                  "facecodec_ckpt": cli.face_codec}.items() if v is not None}
     settings = codec_audit.AuditSettings(lm_config=str(cli.config), path_overrides=overrides)
     config = codec_audit.parse_lm_config(settings)
-    if "ConditionCRegretRVQ" not in config.trainer:
-        raise ValueError("Supply the ForeMotion shared-weight Condition C training config")
+    protocol = checkpoint_protocol(config)
+    if protocol["interpretation_note"]:
+        print(protocol["interpretation_note"], flush=True)
     config.dataset_ratio = cli.dataset_ratio or ("scott_beatx_fulllength" if "scott" in config.dataset_ratio else "full_beatx_fulllength")
     config.embody3d_cache_path = None
     if config.motion_fps != 25 or config.frame_chunk_size != 2:
@@ -429,8 +500,7 @@ def run(cli):
         raise ValueError("Future speech clips must contain at least two steps")
     if cli.mode != "generation" and cli.min_future_steps >= cli.clip_steps:
         raise ValueError("min-future-steps must be smaller than clip-steps")
-    speaker_map_path = cli.speaker_map or cli.checkpoint.parent / "speaker_id_to_index.json"
-    speaker_map = json.loads(speaker_map_path.read_text(encoding="utf-8"))
+    speaker_map, speaker_map_source = load_speaker_map(cli)
     dataset, infos = load_data(cli, config)
     targets = infos[:cli.max_recordings] if cli.max_recordings else infos
     if cli.max_recordings is not None and cli.max_recordings < 1:
@@ -450,6 +520,7 @@ def run(cli):
                 "arguments": {k: str(v) if isinstance(v, Path) else v for k, v in vars(cli).items()},
                 "checkpoint_sha256": checkpoint_hashes,
                 "config_sha256": codec_audit._sha256(cli.config), "speaker_map": speaker_map,
+                "speaker_map_source": speaker_map_source, "protocol": protocol,
                 "recordings": len(targets), "donor_pool_recordings": len(infos), "split": cli.split,
                 "torch_version": torch.__version__, "future_scope": "nonoverlapping speech clips; same lower past boundary",
                 "token_targets": "deterministic canonical codec codes; identical teacher-forced history in all views",
@@ -534,7 +605,7 @@ def run(cli):
         write_csv(output / "token_summary.csv", summary)
         write_csv(output / "token_by_speaker.csv", aggregate_tokens(totals_rows, by_speaker=True) if totals_rows else [])
         write_csv(output / "paired_token_differences.csv", paired_differences(totals_rows, cli.bootstrap, cli.seed) if totals_rows else [])
-        write_report(output, summary, generated_rows)
+        write_report(output, summary, generated_rows, protocol)
         metadata.update(status="complete", elapsed_seconds=time.monotonic() - started)
     except Exception as exc:
         metadata.update(status="failed", error=str(exc), elapsed_seconds=time.monotonic() - started)
@@ -551,7 +622,7 @@ def parse_args(argv=None):
     parser.add_argument("--config", type=Path, required=True, help="Training config belonging to this ForeMotion checkpoint")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--eval-hdf5", type=Path, required=True, help="Full-utterance evaluation cache")
-    parser.add_argument("--speaker-map", type=Path, help="Defaults to speaker_id_to_index.json beside checkpoint")
+    parser.add_argument("--speaker-map", type=Path, help="Defaults to checkpoint-side JSON; otherwise recovers from the original training cache")
     parser.add_argument("--dataset-ratio", choices=("scott_beatx_fulllength", "full_beatx_fulllength", "goodspk_beatx_fulllength"))
     parser.add_argument("--split", choices=("test", "val", "train"), default="test")
     parser.add_argument("--speakers", nargs="+")

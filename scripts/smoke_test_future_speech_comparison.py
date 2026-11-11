@@ -60,6 +60,69 @@ def current_logits(model, codes, audio, text, donor_audio, donor_text, step, cli
 
 
 class FutureSpeechChecks(unittest.TestCase):
+    def test_training_provenance_accepts_global_without_relabelling_the_experiment(self):
+        for trainer in ("UpperFaceLowerGTDM3ConditionCRegretRVQ", "UpperFaceLowerGTDM3SharedRegretRVQ",
+                        "UpperFaceLowerGTDM3SharedRegret"):
+            with self.subTest(trainer=trainer):
+                config = SimpleNamespace(trainer=trainer)
+                protocol = experiment.checkpoint_protocol(config)
+                self.assertEqual(config.trainer, trainer)
+                self.assertEqual(protocol["training_trainer"], trainer)
+                self.assertEqual(protocol["evaluation_attention"], "condition_c_identical_rolling_past_plus_controlled_future")
+                is_global = "SharedRegret" in trainer
+                self.assertEqual(protocol["interpretation_note"] is not None, is_global)
+                with TemporaryDirectory() as directory:
+                    output = Path(directory)
+                    experiment.write_report(output, [], [], protocol)
+                    report = (output / "report.md").read_text(encoding="utf-8")
+                    self.assertIn(trainer, report)
+                    if is_global:
+                        self.assertIn("do not reproduce its original GlobalRegret teacher mask", report)
+        for trainer in ("UpperFaceLowerGTDM3Offline", "UpperFaceLowerGTDM3ConditionCTeacherRVQ", "unknown"):
+            with self.subTest(unsupported=trainer), self.assertRaisesRegex(ValueError, "Unsupported trainer"):
+                experiment.checkpoint_protocol(SimpleNamespace(trainer=trainer))
+
+    def test_legacy_speaker_map_uses_original_training_cache_and_preserves_saved_indices(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            training = root / "train.hdf5"
+            with h5py.File(training, "w") as database:
+                for name, values in (("chunk_ids", ["1_wayne_0_1_1_C0", "2_scott_0_1_1_C0"]),
+                                     ("chunk_relpaths", ["wayne", "scott"]),
+                                     ("chunk_splits", ["train", "train"]),
+                                     ("chunk_speaker_ids", ["wayne", "scott"])):
+                    database.create_dataset(name, data=np.array(values, dtype="S"))
+                database.create_dataset("chunk_is_sitting", data=np.zeros(2, dtype=bool))
+            checksum = hashlib.sha256(training.read_bytes()).hexdigest()
+            config = root / "config.yaml"
+            original = {"dataset": "unified", "dataset_ratio": "scott_beatx_lowervalid",
+                        "beatx_cache_path": str(training), "embody3d_cache_path": None}
+            config.write_text(json.dumps(original), encoding="utf-8")
+            cli = SimpleNamespace(config=config, checkpoint=root / "last_1000.safetensors", speaker_map=None,
+                                  eval_hdf5=root / "evaluation_cache_must_not_be_used.hdf5")
+            with redirect_stdout(StringIO()):
+                mapping, source = experiment.load_speaker_map(cli)
+            self.assertEqual(mapping, {"wayne": 0, "scott": 1})
+            self.assertEqual(source["kind"], "reconstructed_from_original_training_cache")
+            self.assertEqual(source["training_dataset_ratio"], "scott_beatx_lowervalid")
+            self.assertEqual(hashlib.sha256(training.read_bytes()).hexdigest(), checksum)
+            saved = root / "speaker_id_to_index.json"
+            self.assertFalse(saved.exists())
+            self.assertFalse(list(root.glob("*.chunk_index*")))
+            saved.write_text('{"scott": 4}', encoding="utf-8")
+            mapping, source = experiment.load_speaker_map(cli)
+            self.assertEqual(mapping, {"scott": 4})
+            self.assertEqual(source["kind"], "saved_json")
+            cli.speaker_map = root / "explicit_missing.json"
+            with self.assertRaisesRegex(FileNotFoundError, "Speaker map not found"):
+                experiment.load_speaker_map(cli)
+            cli.speaker_map = None
+            saved.unlink()
+            original["beatx_cache_path"] = str(root / "missing_training.hdf5")
+            config.write_text(json.dumps(original), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "original training cache"):
+                experiment.load_speaker_map(cli)
+
     def test_joint_splice_preserves_past_current_and_exact_future_length(self):
         audio = torch.arange(14).reshape(1, 14, 1)
         text = audio + 100
