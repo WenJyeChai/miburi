@@ -207,6 +207,24 @@ class CategoryEvaluationChecks(unittest.TestCase):
         _, interactions = evaluation.paired_statistics(rows, 0, 1)
         self.assertAlmostEqual(interactions[0]["semantic_minus_beat_improvement"], 0.5)
 
+    def test_single_model_category_scores_pool_exposure_and_average_generation_seeds(self):
+        rows = []
+        for fid, count, mean in (("one", 10, 2), ("two", 30, 6)):
+            for seed, shift in (("1", -1), ("2", 1)):
+                for category in evaluation.CATEGORIES:
+                    denominator = count if category == "semantic" else 0
+                    rows.append({"recording_id": fid, "seed": seed, "model": "foremotion", "category": category,
+                                 "region": "upper_hands", "metric": "mpjpe_mm",
+                                 "numerator": (mean + shift) * denominator, "denominator": denominator})
+        result = evaluation.category_statistics(rows, 200, 1)
+        semantic = next(r for r in result if r["category"] == "semantic")
+        self.assertEqual(semantic["value"], 5)
+        self.assertEqual(semantic["recordings_with_observations"], 2)
+        self.assertEqual((semantic["ci95_low"], semantic["ci95_high"]), (2, 6))
+        beat = next(r for r in result if r["category"] == "beat")
+        self.assertIsNone(beat["value"])
+        self.assertEqual(beat["recordings_with_observations"], 0)
+
     def test_complete_pipeline_exports_all_metrics_on_selected_test_pairs(self):
         class FakeEvaluator:
             def __init__(self, cli):
@@ -289,6 +307,42 @@ class CategoryEvaluationChecks(unittest.TestCase):
             with (output / "metrics_summary.csv").open() as stream:
                 summary = list(csv.DictReader(stream))
             self.assertTrue(all(int(row["seeds_with_observations"]) == 2 for row in summary))
+            single_manifest = root / "system_motions.csv"
+            with single_manifest.open("w", newline="", encoding="utf-8") as stream:
+                writer = csv.DictWriter(stream, fieldnames=["recording_id", "seed", "prediction_path"])
+                writer.writeheader()
+                for fid in ids[:2]:
+                    for seed in (1, 2):
+                        writer.writerow({"recording_id": fid, "seed": seed, "prediction_path": f"foremotion/{fid}/pred.npz"})
+            read_motion = evaluation.read_motion
+
+            def read_system_motion_only(path):
+                self.assertNotIn("baseline", str(path))
+                return read_motion(path)
+
+            for use_manifest in (False, True):
+                with self.subTest(single_model_manifest=use_manifest):
+                    source = ["--motion-manifest", str(single_manifest)] if use_manifest else ["--motion-dir", str(root / "foremotion")]
+                    cli = evaluation.parse_args(["--eval-hdf5", str(database_path), *source,
+                                                 "--annotations-dir", str(sem), "--input-fps", "30",
+                                                 "--min-fgd-windows", "2", "--bootstrap", "50",
+                                                 "--output-dir", str(root / f"single_model_{use_manifest}")])
+                    with patch.object(evaluation, "MotionEvaluator", FakeEvaluator), \
+                         patch.object(evaluation, "read_motion", side_effect=read_system_motion_only), redirect_stdout(StringIO()):
+                        output = evaluation.run(cli)
+                    metadata = json.loads((output / "metadata.json").read_text())
+                    self.assertEqual(metadata["analysis_mode"], "single_model_category_performance")
+                    self.assertEqual(metadata["models"], ["foremotion"])
+                    self.assertEqual(len(metadata["generation_seeds"]), 2 if use_manifest else 1)
+                    with (output / "category_metrics.csv").open() as stream:
+                        scores = list(csv.DictReader(stream))
+                    self.assertEqual({r["model"] for r in scores}, {"foremotion", "ground_truth"})
+                    self.assertTrue(all(int(r["recordings_with_observations"]) == 2 for r in scores))
+                    self.assertFalse((output / "paired_comparison.csv").exists())
+                    self.assertFalse((output / "semantic_vs_beat_interaction.csv").exists())
+                    report = (output / "report.md").read_text()
+                    self.assertNotIn("Primary interaction", report)
+                    self.assertNotIn("ForeMotion minus baseline", report)
 
 
 if __name__ == "__main__":

@@ -1,22 +1,20 @@
 # Semantic versus beat gesture evaluation
 
-`scripts/gesture_category_evaluation.py` compares **generated motion** from a
-causal baseline and causal ForeMotion on the same BEATX test recordings. It
-uses the existing `sem/` annotations to evaluate semantic-present and beat-only
-time separately. It does not construct a generator, train a model or contact
-Hugging Face. All motion and evaluator assets are local.
+`scripts/gesture_category_evaluation.py` evaluates **your system's generated
+motion against ground truth**, separately on semantic-present and beat-only
+intervals in the BEATX test recordings. Supply one saved motion directory; no
+baseline model is required. The script uses existing `sem/` annotations and
+local evaluator assets. It does not construct a generator, train a model or
+contact Hugging Face.
 
-The comparison should use the same architecture, codecs, training data/schedule,
-speaker setting, inference CFG and sampler, with future-aware distillation as
-the intended difference. The caller supplies this experimental pairing: these
-generation settings cannot be inferred from the saved motion arrays alone.
+This analysis characterizes the evaluated system's performance by gesture
+category. Attributing a category-specific improvement to ForeMotion training
+would require a separate matched model comparison.
 
 ## 1. Save the generated motions
 
-Use the existing `scripts/test.py` command for each model, with `--save True`
-and `--visualize False`. The other arguments, including `--random_seed` and
-`--cfg_scale`, must match between models. For the ForeMotion checkpoint discussed
-in this project:
+Use the existing `scripts/test.py` command with `--save True` and
+`--visualize False`. For the ForeMotion checkpoint discussed in this project:
 
 ```bash
 CUDA_VISIBLE_DEVICES=2 \
@@ -45,25 +43,22 @@ experiments/<run>/test_1000/2_scott_0_1_1/gt.npz
 experiments/<run>/test_1000/2_scott_0_1_1/pred.npz
 ```
 
-Run the matching no-distillation baseline with its own config/checkpoint and
-the same evaluation settings. Its output directory is `test_<checkpoint_epoch>`.
-`test.py` writes to that directory again on subsequent calls, so preserve each
-seed's exports in a separate directory before generating another seed. Existing
-saved motions can be reused without regenerating them.
+`test.py` writes to `test_<checkpoint_epoch>` again on subsequent calls, so
+preserve each seed's exports in a separate directory before generating another
+seed. Existing saved motions can be reused without regenerating them.
 
-## 2. Analyze one paired generation seed
+## 2. Evaluate your system
 
 Copy the new script and the existing `scripts/gesture_category_composition.py`
 to the server. Keep the existing `scripts/trainers/utils/` modules there as well.
-Run from the repository root. Replace `YOUR_CAUSAL_BASELINE` and `test_EPOCH`:
+Run from the repository root:
 
 ```bash
 CUDA_VISIBLE_DEVICES=2 \
 OMP_NUM_THREADS=4 \
 python scripts/gesture_category_evaluation.py \
   --eval-hdf5 datasets/data_cache/beatx_eval/database.hdf5 \
-  --baseline-dir experiments/YOUR_CAUSAL_BASELINE/test_EPOCH \
-  --foremotion-dir experiments/0807_2331_gtdm3_sharedregretrvq_global_scott_densefg_bf16_4_regret_6_weight_cosine/test_1000 \
+  --motion-dir experiments/0807_2331_gtdm3_sharedregretrvq_global_scott_densefg_bf16_4_regret_6_weight_cosine/test_1000 \
   --annotations-dir datasets/beat_english_v2.0.0/sem \
   --data-dir datasets/beat_english_v2.0.0 \
   --dataset-ratio scott_beatx_fulllength \
@@ -73,9 +68,9 @@ python scripts/gesture_category_evaluation.py \
   --output-dir reports/semantic_vs_beat_scott
 ```
 
-All selected recordings must have both predictions, matching `gt.npz` references
-and an annotation file. There is no silent intersection that drops missing model
-outputs. The default split is test only. Use `full_beatx_fulllength` for the
+All selected recordings must have `pred.npz`, `gt.npz` and an annotation file.
+Missing recordings are not silently dropped. `--foremotion-dir` remains an alias
+for `--motion-dir`. The default split is test only. Use `full_beatx_fulllength` for the
 existing 23-speaker evaluation protocol. `--speakers` can further restrict it.
 
 The default metrics include geometry, FGD and beat alignment. For an initial
@@ -103,7 +98,7 @@ The source declaration and actual chosen input rate are both recorded in
 The script checks motion duration against the selected full-sequence HDF5.
 It permits at most one missing input tail frame by default, matching the
 two-frame codec group truncation in `test.py`. Prediction and reference frame
-counts must match exactly across models and seeds; it does not time-warp,
+counts must match exactly between prediction and reference, and across seeds; it does not time-warp,
 silently truncate mismatched predictions, align gestures after generation, or
 pad short sequences. Use `--max-tail-frames` only for a separately justified
 export protocol.
@@ -130,8 +125,8 @@ and the deictic/iconic/metaphoric categories; quality levels are pooled here.
   and unlabeled time are excluded from both primary groups. Missing annotation
   files stop the run rather than being treated as beat or no gesture.
 
-The evaluation masks come from the reference annotations, identically for both
-models. Full continuous utterances are generated before any category selection.
+The evaluation masks come from the reference annotations. Full continuous
+utterances are generated before any category selection.
 `coverage.csv` reports seconds, contiguous semantic/beat event counts, overlap,
 exclusions and FGD window coverage for every recording.
 
@@ -159,7 +154,7 @@ A window can enter at most one category. No disjoint annotation spans
 are stitched together. `--window-frames`, `--window-stride` and `--window-purity`
 configure this explicitly.
 
-The same windows and references are used for both models. FGD is calculated
+Window selection depends only on reference annotations. FGD is calculated
 over pooled latent rows for each category/model/seed, never averaged from
 individual-recording FGD. A category needs at least 20 windows by default;
 otherwise its FGD is blank with `insufficient_windows`. Values with no more
@@ -167,7 +162,6 @@ feature rows than feature dimensions are flagged `computed_low_feature_count`.
 Window counts and frame coverage must accompany these scores. This windowed
 protocol differs from the original full-utterance FGD and does not establish
 that scores from different-sized category populations have equal estimation bias.
-The primary interaction test below uses additive geometric metrics.
 
 **Category BeatAlign:** audio onsets and velocity-minimum candidates are detected
 on continuous audio/motion. The existing mean-speed normalization, order-7
@@ -182,29 +176,15 @@ Candidates within flagged/unknown spans or their eight-frame derivative/extrema
 neighborhood are discarded.
 Ground-truth alignment is exported as a reference under `ground_truth`.
 
-## Paired comparisons and the reviewer question
+## Category scores and uncertainty
 
-`paired_comparison.csv` reports ForeMotion minus baseline for each group.
-Negative differences favor ForeMotion for MPJPE/rotation error; positive
-differences favor it for PCK/BeatAlign. Its confidence intervals resample whole
-recordings, keeping both models paired. Frames and joints are not independent
-bootstrap units.
-
-The primary endpoint is upper/hands MPJPE's interaction:
-
-```text
-semantic improvement = baseline semantic MPJPE - ForeMotion semantic MPJPE
-beat improvement     = baseline beat MPJPE - ForeMotion beat MPJPE
-interaction          = semantic improvement - beat improvement
-```
-
-The interaction uses recordings containing **both** categories. A positive value
-means a larger absolute improvement in semantic-present intervals. Its paired
-recording-bootstrap interval directly tests the difference in improvements.
-Simply having an interval exclude zero in one category and cross zero in the
-other is insufficient to establish an interaction. Other metrics' interaction
-signs are adjusted so positive always means a larger semantic improvement.
-Secondary intervals are exploratory and are not multiplicity-adjusted.
+`category_metrics.csv` reports the system's MPJPE, PCK, rotation error and
+BeatAlign separately for semantic-present and beat-only time, with 95%
+recording-bootstrap confidence intervals. MPJPE/rotation error are lower-is-
+better; PCK/BeatAlign are higher-is-better. Frames and joints are not independent
+bootstrap units. Intervals are omitted when fewer than two recordings have
+observations in a category. A missing category is reported as unavailable,
+rather than receiving zero error. FGD is reported separately with sample counts.
 
 With several generation seeds, numerators are averaged within each recording
 before recording-bootstrap inference. Seeds do not increase the number of
@@ -215,35 +195,45 @@ generation seeds, recordings and speaker cohort.
 These metrics test motion fidelity/timing at reference-annotated semantic
 events. They do not independently determine whether a generated gesture
 expresses the speech meaning; a different realization may also be semantically
-valid. Interpret a semantic-specific improvement within that scope.
+valid. Category difficulty and sample size differ, so a smaller score in one
+category does not establish that ForeMotion training benefits that category more.
+
+The previous paired mode remains optional: explicitly supplying `--baseline-dir`
+alongside `--motion-dir` also generates paired model differences and a semantic-
+versus-beat improvement interaction. Neither baseline files nor interaction
+outputs are used in the single-system analysis.
 
 ## Several generation seeds
 
-Use `--pairs-manifest pairs.csv` in place of the two directory arguments:
+Use `--motion-manifest motions.csv` in place of `--motion-dir`:
 
 ```csv
-recording_id,seed,baseline_path,foremotion_path
-2_scott_0_1_1,2342,/exports/baseline/2342/2_scott_0_1_1/pred.npz,/exports/foremotion/2342/2_scott_0_1_1/pred.npz
-2_scott_0_1_1,3453,/exports/baseline/3453/2_scott_0_1_1/pred.npz,/exports/foremotion/3453/2_scott_0_1_1/pred.npz
+recording_id,seed,prediction_path
+2_scott_0_1_1,2342,/exports/foremotion/2342/2_scott_0_1_1/pred.npz
+2_scott_0_1_1,3453,/exports/foremotion/3453/2_scott_0_1_1/pred.npz
 ```
 
 Include every selected recording for every seed. Paths can be absolute or
 relative to the manifest's directory. `gt.npz` is read beside each prediction;
-optional `baseline_reference_path` / `foremotion_reference_path` columns override
-this. A shared `reference_path` column is also accepted. All references must
-agree. Duplicate seed/recording pairs and incomplete pairings are rejected.
+an optional `reference_path` column overrides this. References must agree across
+seeds. Duplicate seed/recording rows and incomplete recording coverage are
+rejected. Legacy `--pairs-manifest` / `foremotion_path` names are accepted;
+`baseline_path` and model-specific reference columns are only needed for the
+optional paired comparison.
 
 ## Outputs and verification
 
-- `report.md`: main category comparisons, primary interaction and FGD table.
-- `paired_comparison.csv`: paired per-category differences and 95% intervals.
-- `semantic_vs_beat_interaction.csv`: direct differences in improvement.
+- `report.md`: main system performance tables by category and FGD table.
+- `category_metrics.csv`: per-category system scores with 95% confidence intervals.
 - `metrics_by_seed.csv` / `metrics_summary.csv`: dataset scores and seed means/std.
 - `per_recording_metrics.csv`: numerators and denominators for reproducibility.
 - `fgd_by_seed.csv` / `fgd_windows.csv`: when requested, scores/status and exact windows.
 - `coverage.csv` / `annotation_intervals.csv`: population, exposure and exclusions.
 - `input_manifest.csv`: prediction/reference paths, hashes and frame-rate declarations.
 - `metadata.json`: settings, definitions, script hash, timing and complete/failed status.
+
+`paired_comparison.csv` and `semantic_vs_beat_interaction.csv` are produced only
+when an optional baseline is explicitly provided.
 
 Use a fresh output directory for each run. Partial per-recording results are
 written progressively; automatic resume is not implemented.
@@ -255,7 +245,7 @@ python -B -m scripts.smoke_test_gesture_category_evaluation
 Synthetic checks cover annotation overlap/exclusions, exact-time masks,
 sub-frame events, fixed continuous windows, millimetre/PCK arithmetic,
 reference/fps validation, seed pairing, known Fréchet controls, continuous
-rhythm scores, recording-bootstrap interactions and complete single/multiple-
-seed pipeline exports. Local component checks also exercised real SMPL-X on
+rhythm scores, recording-bootstrap category estimates/interactions and complete
+single-model and paired single/multiple-seed pipeline exports. Local component checks also exercised real SMPL-X on
 CUDA, the evaluator architecture with synthetic encoder weights, and its rhythm
 detector. These checks do not represent real BEATX model results.

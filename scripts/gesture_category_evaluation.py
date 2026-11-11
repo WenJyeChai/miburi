@@ -1,4 +1,4 @@
-"""Compare saved baseline/ForeMotion motion on semantic-present and beat-only time.
+"""Evaluate saved ForeMotion motion on semantic-present and beat-only time.
 
 Run from the repository root; see docs/gesture_category_evaluation.md. Uses
 ordinary test.py gt.npz/pred.npz exports, local assets and BEAT sem/ annotations.
@@ -110,7 +110,7 @@ def point_categories(times, segments):
 
 
 def select_windows(weights, frames=32, stride=32, purity=0.8, excluded_intervals=()):
-    """Select identical continuous windows for both models using GT labels only."""
+    """Select continuous windows using only the reference annotation labels."""
     result = []
     length = len(weights["semantic"])
     for start in range(0, length - frames + 1, stride):
@@ -135,12 +135,14 @@ def resolve_pairs(cli, recordings):
                 continue
             seed = row.get("seed", "").strip()
             if not seed:
-                raise ValueError("Each pairs-manifest row needs a generation seed")
+                raise ValueError("Each motion-manifest row needs a generation seed")
             pair = {"recording_id": fid, "seed": seed}
             for model in MODELS:
-                raw = row.get(model + "_path")
+                raw = row.get(model + "_path") or (row.get("prediction_path") if model == "foremotion" else None)
                 if not raw:
-                    raise ValueError(f"Missing {model}_path for {fid}")
+                    if model == "baseline":
+                        continue
+                    raise ValueError(f"Missing prediction_path or foremotion_path for {fid}")
                 path = Path(raw).expanduser()
                 pair[model] = (path if path.is_absolute() else base / path).resolve()
                 raw_reference = row.get(model + "_reference_path") or row.get("reference_path")
@@ -154,19 +156,25 @@ def resolve_pairs(cli, recordings):
         for recording in recordings:
             pair = {"recording_id": recording.recording_id, "seed": str(cli.generation_seed)}
             for model in MODELS:
+                if getattr(cli, model + "_dir") is None:
+                    continue
                 folder = (getattr(cli, model + "_dir") / recording.recording_id).resolve()
                 pair[model], pair[model + "_reference"] = folder / "pred.npz", folder / "gt.npz"
             result[pair["seed"], recording.recording_id] = pair
     if not result:
-        raise ValueError("No model pairs match the selected recordings")
+        raise ValueError("No prediction exports match the selected recordings")
     for seed in sorted({key[0] for key in result}):
         actual = {fid for s, fid in result if s == seed}
         if actual != selected:
             raise ValueError(f"Seed {seed} is missing selected recordings: {sorted(selected - actual)}")
+    model_sets = {tuple(model for model in MODELS if model in pair) for pair in result.values()}
+    if len(model_sets) != 1 or not all("foremotion" in models for models in model_sets):
+        raise ValueError("Every selected recording/seed must provide the same models; baseline paths are optional but cannot be partial")
+    models = next(iter(model_sets))
     for pair in result.values():
-        if pair["baseline"] == pair["foremotion"]:
+        if "baseline" in pair and pair["baseline"] == pair["foremotion"]:
             raise ValueError("Baseline and ForeMotion must point to separate prediction files")
-        for key in (*MODELS, "baseline_reference", "foremotion_reference"):
+        for key in (*models, *(model + "_reference" for model in models)):
             if not pair[key].is_file():
                 raise FileNotFoundError(f"Missing {key} motion for {pair['recording_id']}: {pair[key]}; generate test.py exports with --save True")
     return result
@@ -198,10 +206,11 @@ def read_motion(path):
 
 
 def read_pair(pair, recording, input_fps, max_tail_frames):
-    motions = {model: read_motion(pair[model]) for model in MODELS}
-    references = {model: read_motion(pair[model + "_reference"]) for model in MODELS}
-    reference = references["baseline"]
-    for model in MODELS:
+    models = tuple(model for model in MODELS if model in pair)
+    motions = {model: read_motion(pair[model]) for model in models}
+    references = {model: read_motion(pair[model + "_reference"]) for model in models}
+    reference = references[models[0]]
+    for model in models:
         other = references[model]
         for key in ("poses", "betas", "trans", "expressions"):
             if (key in reference) != (key in other):
@@ -388,6 +397,36 @@ def seed_summary(rows):
     return result
 
 
+def category_statistics(rows, bootstrap, seed):
+    """Absolute category scores, averaging seeds within each recording first."""
+    cells = defaultdict(list)
+    for row in rows:
+        cells[row["recording_id"], row["model"], row["category"], row["region"], row["metric"]].append(row)
+    grouped = defaultdict(list)
+    for (fid, model, category, region, metric), group in cells.items():
+        if len({r["seed"] for r in group}) != len(group):
+            raise ValueError("Duplicate per-recording metric rows")
+        counts = np.array([r["denominator"] for r in group])
+        if not np.allclose(counts, counts[:1]):
+            raise ValueError("Generation seeds evaluated different target observations")
+        grouped[model, category, region, metric].append((np.mean([r["numerator"] for r in group]), counts[0]))
+    rng = np.random.default_rng(seed)
+    result = []
+    for (model, category, region, metric), observations in sorted(grouped.items()):
+        values = np.asarray(observations)
+        values = values[values[:, 1] > 0]
+        value = float(values[:, 0].sum() / values[:, 1].sum()) if len(values) else None
+        low = high = None
+        if bootstrap and len(values) >= 2:
+            picks = rng.integers(len(values), size=(bootstrap, len(values)))
+            distribution = values[picks, 0].sum(1) / values[picks, 1].sum(1)
+            low, high = np.quantile(distribution, [0.025, 0.975]).tolist()
+        result.append({"model": model, "category": category, "region": region, "metric": metric,
+                       "value": value, "ci95_low": low, "ci95_high": high,
+                       "recordings_with_observations": len(values)})
+    return result
+
+
 def paired_statistics(rows, bootstrap, seed):
     """Average generation seeds within recording; resample paired recordings."""
     cells = defaultdict(list)
@@ -470,13 +509,13 @@ def frechet_features(a, b):
     return max(0.0, float(value))
 
 
-def fgd_rows(features, seeds, minimum_windows):
+def fgd_rows(features, seeds, minimum_windows, models=MODELS):
     result = []
     for seed in seeds:
         for category in CATEGORIES:
             target = features.get((seed, category, "ground_truth"), [])
             count = len(target)
-            for model in MODELS:
+            for model in models:
                 predicted = features.get((seed, category, model), [])
                 if len(predicted) != count:
                     raise ValueError("FGD models have different window counts")
@@ -491,11 +530,19 @@ def fgd_rows(features, seeds, minimum_windows):
     return result
 
 
-def write_report(output, differences, interactions, features, coverage):
-    lines = ["# Semantic-present versus beat-only motion evaluation", "",
-             "Both models use the same reference annotations and evaluated time. Differences are ForeMotion minus baseline.", "",
-             "| Category | Region | Metric | Baseline | ForeMotion | Difference [95% CI] |", "|---|---|---|---:|---:|---:|"]
+def write_report(output, differences, interactions, features, coverage, category_scores):
     fmt = lambda v: "unavailable" if v is None else f"{v:.6g}"
+    lines = ["# Semantic-present versus beat-only motion evaluation", "",
+             "Performance is measured against the recorded reference motion within each annotated category.", "",
+             "| Category | Model | Region | Metric | Value | 95% CI |", "|---|---|---|---|---:|---:|"]
+    for row in category_scores:
+        if row["region"] != "upper_hands" and row["metric"] != "beat_alignment":
+            continue
+        lines.append(f"| {row['category']} | {row['model']} | {row['region']} | {row['metric']} | {fmt(row['value'])} | "
+                     f"[{fmt(row['ci95_low'])}, {fmt(row['ci95_high'])}] |")
+    if differences:
+        lines += ["", "Optional paired model comparison. Differences are ForeMotion minus baseline.", "",
+                  "| Category | Region | Metric | Baseline | ForeMotion | Difference [95% CI] |", "|---|---|---|---:|---:|---:|"]
     for row in differences:
         if row["region"] != "upper_hands" and row["metric"] != "beat_alignment":
             continue
@@ -512,9 +559,10 @@ def write_report(output, differences, interactions, features, coverage):
         for row in features:
             lines.append(f"| {row['category']} | {row['model']} | {row['seed']} | {fmt(row['value'])} | {row['windows']} | {row['status']} |")
     lines += ["", f"Evaluated recordings: {len(coverage)}. See coverage.csv for semantic/beat exposure and exclusions.",
-              "Intervals are paired recording-bootstrap intervals, conditional on these checkpoints, generation seeds and selected recordings. Secondary intervals are not multiplicity-adjusted.",
+              "Intervals resample whole recordings, conditional on the supplied model outputs, generation seeds and selected recordings. They are not multiplicity-adjusted.",
               "Generation seeds are averaged within recording before bootstrapping. They are not additional independent recordings.",
               "Window FGD uses continuous fixed-length windows and is not interchangeable with whole-utterance benchmark FGD. No FGD confidence interval is inferred from framewise errors.",
+              "Category scores describe the evaluated system. Establishing a larger improvement from ForeMotion training requires a separate matched model comparison.",
               "Motion fidelity at reference semantic intervals does not by itself establish semantic appropriateness. A different gesture may also convey the same meaning."]
     (output / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -532,14 +580,19 @@ def run(cli):
         raise ValueError("Invalid beat margin or PCK thresholds")
     if len(cli.pck_thresholds_mm) != len(set(cli.pck_thresholds_mm)):
         raise ValueError("PCK thresholds must be distinct")
-    if bool(cli.pairs_manifest) == bool(cli.baseline_dir or cli.foremotion_dir) or (not cli.pairs_manifest and not (cli.baseline_dir and cli.foremotion_dir)):
-        raise ValueError("Supply --baseline-dir AND --foremotion-dir, or --pairs-manifest")
+    if cli.pairs_manifest:
+        if cli.baseline_dir or cli.foremotion_dir:
+            raise ValueError("Use --motion-manifest instead of directory arguments")
+    elif cli.foremotion_dir is None:
+        raise ValueError("Supply --motion-dir (or --foremotion-dir), or --motion-manifest")
     if cli.max_recordings is not None and cli.max_recordings < 1:
         raise ValueError("max-recordings must be positive")
     recordings = annotations.load_recordings(cli)
     if cli.max_recordings is not None:
         recordings = recordings[:cli.max_recordings]
     pairs = resolve_pairs(cli, recordings)
+    models = tuple(model for model in MODELS if model in next(iter(pairs.values())))
+    comparison = "baseline" in models
     annotation_dir = cli.annotations_dir or cli.data_dir / "sem"
     candidates = defaultdict(list)
     for path in annotation_dir.rglob("*"):
@@ -559,14 +612,17 @@ def run(cli):
     metadata = {"status": "running", "created_at": datetime.now(timezone.utc).isoformat(),
                 "arguments": {k: str(v) if isinstance(v, Path) else v for k, v in vars(cli).items()},
                 "recordings": len(recordings), "generation_seeds": seeds, "partial_run": cli.max_recordings is not None,
+                "analysis_mode": "paired_model_comparison" if comparison else "single_model_category_performance",
+                "models": list(models),
                 "categories": {"semantic": "deictic/iconic/metaphoric union, including simultaneous beat",
                                "beat": "beat annotations outside semantic intervals"},
                 "annotation_policy": "Unknown/flagged spans excluded; no-gesture and unlabeled time excluded",
                 "frame_rate_policy": "input-fps explicitly overrides NPZ metadata; evaluate at 30 fps with existing rotational SLERP",
                 "geometry": "SMPL-X metres converted to millimetres; zero translation, pelvis-relative; no rotation/Procrustes alignment; flat_hand_mean=True",
-                "primary_endpoint": "upper_hands/mpjpe_mm semantic-minus-beat improvement interaction",
-                "inference": "No generator or training is run. Caller supplies matched causal baseline and ForeMotion exports.",
-                "statistics": "Average seeds within recording, then paired whole-recording bootstrap; interaction restricted to recordings with both categories",
+                "primary_endpoint": ("upper_hands/mpjpe_mm semantic-minus-beat improvement interaction" if comparison
+                                     else "upper_hands/mpjpe_mm performance within each gesture category"),
+                "inference": "No generator or training is run. Saved system motion is scored against its gt.npz reference.",
+                "statistics": "Average seeds within recording, then whole-recording bootstrap for category scores; paired comparisons only when a baseline is explicitly supplied",
                 "fgd": "Existing BEAT encoder, full-body 6D rotations and reference jaw substitution, continuous category-qualified windows",
                 "beat": "Existing normalized speed-minimum detector; per-audio-onset Gaussian match averaged over 13 upper-body joints, classified by onset time; continuous full-motion candidates",
                 "script_sha256": sha256(Path(__file__)), "annotation_reader_sha256": sha256(Path(annotations.__file__)),
@@ -593,7 +649,7 @@ def run(cli):
                       or not np.allclose(reference["betas"], canonical_reference["betas"], atol=1e-6, rtol=0)):
                     raise ValueError(f"{fid}: generation seeds have different references")
                 target_pose = evaluator.resample(reference["poses"], cli.input_fps)
-                predicted_poses = {model: evaluator.resample(motions[model]["poses"], cli.input_fps) for model in MODELS}
+                predicted_poses = {model: evaluator.resample(motions[model]["poses"], cli.input_fps) for model in models}
                 frames = len(target_pose)
                 end = min(recording.end_seconds, frames / EVAL_FPS)
                 segments = category_segments(annotation_rows, 0, end)
@@ -610,7 +666,7 @@ def run(cli):
                     interval_rows.extend({"recording_id": fid, "start_seconds": lo, "end_seconds": hi, "category": c} for lo, hi, c in segments)
                 target_joints = evaluator.joints(target_pose, reference["betas"])
                 predicted_joints = {}
-                for model in MODELS:
+                for model in models:
                     predicted_joints[model] = evaluator.joints(predicted_poses[model], reference["betas"])
                     stats = frame_metric_stats(predicted_joints[model], target_joints, predicted_poses[model], target_pose, weights, cli.pck_thresholds_mm)
                     rows.extend({"recording_id": fid, "speaker": recording.speaker, "model": model, "seed": seed, **row} for row in stats)
@@ -649,8 +705,10 @@ def run(cli):
                 write_csv(output / "per_recording_metrics.csv", rows)
                 print(f"  seed {seed}: {frames} frames; semantic={weights['semantic'].sum() / EVAL_FPS:.2f}s, beat={weights['beat'].sum() / EVAL_FPS:.2f}s", flush=True)
         dataset_rows = aggregate_metrics(rows)
-        differences, interactions = paired_statistics(rows, cli.bootstrap, cli.bootstrap_seed)
-        features = fgd_rows(feature_store, seeds, cli.min_fgd_windows) if "fgd" in cli.metrics else []
+        category_scores = category_statistics(rows, cli.bootstrap, cli.bootstrap_seed)
+        differences, interactions = paired_statistics(rows, cli.bootstrap, cli.bootstrap_seed) if comparison else ([], [])
+        features = fgd_rows(feature_store, seeds, cli.min_fgd_windows, models) if "fgd" in cli.metrics else []
+        write_csv(output / "category_metrics.csv", category_scores)
         write_csv(output / "metrics_by_seed.csv", dataset_rows)
         write_csv(output / "metrics_summary.csv", seed_summary(dataset_rows + features))
         write_csv(output / "paired_comparison.csv", differences)
@@ -662,7 +720,7 @@ def run(cli):
             write_csv(output / "fgd_windows.csv", window_rows,
                       ["recording_id", "start_frame_30fps", "end_frame_30fps", "start_seconds", "end_seconds", "category", "category_fraction"])
         write_csv(output / "input_manifest.csv", inputs)
-        write_report(output, differences, interactions, features, coverage)
+        write_report(output, differences, interactions, features, coverage, category_scores)
         metadata.update(status="complete", elapsed_seconds=time.monotonic() - started)
     except Exception as exc:
         metadata.update(status="failed", error=str(exc), elapsed_seconds=time.monotonic() - started)
@@ -676,9 +734,11 @@ def run(cli):
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--eval-hdf5", type=Path, required=True)
-    parser.add_argument("--baseline-dir", type=Path, help="test.py output root containing <recording>/pred.npz and gt.npz")
-    parser.add_argument("--foremotion-dir", type=Path)
-    parser.add_argument("--pairs-manifest", type=Path, help="CSV pairing saved motions across generation seeds; alternative to two directories")
+    parser.add_argument("--motion-dir", "--foremotion-dir", dest="foremotion_dir", type=Path,
+                        help="System test.py output root containing <recording>/pred.npz and gt.npz")
+    parser.add_argument("--baseline-dir", type=Path, help="Optional extra model for a paired comparison; not needed for system evaluation")
+    parser.add_argument("--motion-manifest", "--pairs-manifest", dest="pairs_manifest", type=Path,
+                        help="CSV of saved system motions across generation seeds; alternative to --motion-dir")
     parser.add_argument("--generation-seed", type=int, default=2342, help="Provenance label for directory mode; does not regenerate motion")
     parser.add_argument("--data-dir", type=Path, default=Path("datasets/beat_english_v2.0.0"))
     parser.add_argument("--annotations-dir", type=Path)
