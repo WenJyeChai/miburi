@@ -452,6 +452,11 @@ shape is rejected.
 
 ##### Condition C: future-only speech privilege
 
+For a training-time future-content control, see
+[past-as-future training](docs/past_as_future_training.md). It pairs correct
+future and repeated historical speech with identical sampled KL targets,
+while retaining full causal-student token/RVQ training and GlobalRegret masks.
+
 The [condition-C experiment guide](docs/condition_c_experiments.md) provides
 matched training commands for ForeMotion with a detached shared-weight teacher
 and a directly supervised teacher-only model. Both teacher views retain the

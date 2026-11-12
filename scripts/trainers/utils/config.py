@@ -169,6 +169,19 @@ def parse_args():
         ),
     )
     parser.add(
+        "--regret_future_context", default="matched", type=str,
+        choices=["matched", "past_as_future"],
+        help="Future content for UpperFaceLowerGTDM3FutureContextRegretRVQ only. "
+             "matched uses true future; past_as_future copies an equal-length "
+             "speech segment ending at the current group into future slots.",
+    )
+    parser.add(
+        "--regret_context_targets", default=4, type=int,
+        help="Maximum sampled eligible positions per clip for the FutureContext "
+             "trainer. Both matched and past-as-future use the same sampling. "
+             "Student CE still covers every valid position.",
+    )
+    parser.add(
         "--linguistic_regret_max_lookahead_seconds",
         default=0.0,
         type=float,

@@ -87,14 +87,14 @@ class FutureSpeechChecks(unittest.TestCase):
 
     def test_training_provenance_accepts_global_without_relabelling_the_experiment(self):
         for trainer in ("UpperFaceLowerGTDM3ConditionCRegretRVQ", "UpperFaceLowerGTDM3SharedRegretRVQ",
-                        "UpperFaceLowerGTDM3SharedRegret"):
+                        "UpperFaceLowerGTDM3SharedRegret", "UpperFaceLowerGTDM3FutureContextRegretRVQ"):
             with self.subTest(trainer=trainer):
                 config = SimpleNamespace(trainer=trainer)
                 protocol = experiment.checkpoint_protocol(config)
                 self.assertEqual(config.trainer, trainer)
                 self.assertEqual(protocol["training_trainer"], trainer)
                 self.assertEqual(protocol["evaluation_attention"], "condition_c_identical_rolling_past_plus_controlled_future")
-                is_global = "SharedRegret" in trainer
+                is_global = "SharedRegret" in trainer or "FutureContextRegret" in trainer
                 self.assertEqual(protocol["interpretation_note"] is not None, is_global)
                 with TemporaryDirectory() as directory:
                     output = Path(directory)

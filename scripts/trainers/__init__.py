@@ -58,6 +58,10 @@ _TRAINER_IMPORTS = (
         "UpperFaceLowerGTDM3WordRegretRVQTrainer",
     ),
     (
+        ".uflgtdm3_future_context_regret_rvq_trainer",
+        "UpperFaceLowerGTDM3FutureContextRegretRVQTrainer",
+    ),
+    (
         ".uflgtdm3_linguistic_regret_rvq_trainer",
         "UpperFaceLowerGTDM3SentenceRegretRVQTrainer",
     ),

@@ -15,7 +15,10 @@ generated-motion evaluation. It constructs no optimizer and requires no Moshi
 download: speech embedding weights come directly from the supplied checkpoint.
 
 The supported training configs are `UpperFaceLowerGTDM3ConditionCRegretRVQ`,
-`UpperFaceLowerGTDM3SharedRegretRVQ` and `UpperFaceLowerGTDM3SharedRegret`.
+`UpperFaceLowerGTDM3SharedRegretRVQ`, `UpperFaceLowerGTDM3SharedRegret`, and
+`UpperFaceLowerGTDM3FutureContextRegretRVQ` (the paired
+[past-as-future training controls](past_as_future_training.md)). For the latter,
+metadata also records the training future-content mode and sampled target count.
 Keep the checkpoint's original saved config; do not change its trainer name to
 pass validation. All three use the compatible causal GTDM3 generator. For a
 GlobalRegret checkpoint, training used full-clip speech attention in its teacher

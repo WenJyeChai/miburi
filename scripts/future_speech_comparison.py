@@ -44,11 +44,12 @@ def checkpoint_protocol(config):
         "UpperFaceLowerGTDM3ConditionCRegretRVQ": "condition_c_rolling_past_plus_future",
         "UpperFaceLowerGTDM3SharedRegretRVQ": "global_regret_full_clip_speech",
         "UpperFaceLowerGTDM3SharedRegret": "global_regret_full_clip_speech",
+        "UpperFaceLowerGTDM3FutureContextRegretRVQ": "global_regret_sampled_future_content_control",
     }
     if config.trainer not in policies:
         raise ValueError(
             f"Unsupported trainer {config.trainer!r}. Supply a shared-weight GTDM3 "
-            "ConditionCRegretRVQ, SharedRegretRVQ, or SharedRegret checkpoint with "
+            "ConditionCRegretRVQ, SharedRegretRVQ, SharedRegret, or FutureContextRegretRVQ checkpoint with "
             "its original saved training config."
         )
     note = (
@@ -58,6 +59,9 @@ def checkpoint_protocol(config):
         if policies[config.trainer].startswith("global_regret") else None
     )
     return {"training_trainer": config.trainer, "training_teacher_attention": policies[config.trainer],
+            "training_future_context": getattr(config, "regret_future_context", "matched"),
+            "training_context_targets": (getattr(config, "regret_context_targets", 4)
+                                         if config.trainer == "UpperFaceLowerGTDM3FutureContextRegretRVQ" else None),
             "evaluation_attention": "condition_c_identical_rolling_past_plus_controlled_future",
             "interpretation_note": note}
 
