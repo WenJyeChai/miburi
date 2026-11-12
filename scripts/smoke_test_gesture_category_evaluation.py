@@ -260,8 +260,10 @@ class CategoryEvaluationChecks(unittest.TestCase):
             input_hash = evaluation.sha256(database_path)
             sem = root / "sem"
             sem.mkdir()
-            for fid in ids[:2]:
-                (sem / f"{fid}.txt").write_text("01_beat_align 0 4.2666666667 4.2666666667 0.1\n05_iconic_l 0 1.1 1.1 0.5\n", encoding="utf-8")
+            for fid in ids:
+                content = ("malformed training annotation: must never be read\n" if fid == ids[2] else
+                           "01_beat_align 0 4.2666666667 4.2666666667 0.1\n05_iconic_l 0 1.1 1.1 0.5\n")
+                (sem / f"{fid}.txt").write_text(content, encoding="utf-8")
                 for model, value in (("baseline", 0.1), ("foremotion", 0.05)):
                     write_motion(root / model / fid / "pred.npz", frames=128, value=value)
                     write_motion(root / model / fid / "gt.npz", frames=128)
@@ -275,6 +277,11 @@ class CategoryEvaluationChecks(unittest.TestCase):
             metadata = json.loads((output / "metadata.json").read_text())
             self.assertEqual(metadata["status"], "complete")
             self.assertEqual(metadata["recordings"], 2)
+            self.assertEqual(metadata["selected_recording_ids"], ids[:2])
+            with (output / "selected_recordings.csv").open() as stream:
+                selected = list(csv.DictReader(stream))
+            self.assertEqual([r["recording_id"] for r in selected], ids[:2])
+            self.assertTrue(all(r["split"] == "test" for r in selected))
             with (output / "coverage.csv").open() as stream:
                 coverage = list(csv.DictReader(stream))
             self.assertEqual(len(coverage), 2)
@@ -333,6 +340,7 @@ class CategoryEvaluationChecks(unittest.TestCase):
                     metadata = json.loads((output / "metadata.json").read_text())
                     self.assertEqual(metadata["analysis_mode"], "single_model_category_performance")
                     self.assertEqual(metadata["models"], ["foremotion"])
+                    self.assertEqual(metadata["selected_recording_ids"], ids[:2])
                     self.assertEqual(len(metadata["generation_seeds"]), 2 if use_manifest else 1)
                     with (output / "category_metrics.csv").open() as stream:
                         scores = list(csv.DictReader(stream))

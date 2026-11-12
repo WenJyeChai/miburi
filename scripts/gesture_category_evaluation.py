@@ -593,10 +593,12 @@ def run(cli):
     pairs = resolve_pairs(cli, recordings)
     models = tuple(model for model in MODELS if model in next(iter(pairs.values())))
     comparison = "baseline" in models
+    selected_ids = {recording.recording_id for recording in recordings}
+    print(f"Selected {len(recordings)} '{cli.split}' recordings; only their matching motion exports and annotations will be evaluated.", flush=True)
     annotation_dir = cli.annotations_dir or cli.data_dir / "sem"
     candidates = defaultdict(list)
     for path in annotation_dir.rglob("*"):
-        if path.is_file() and path.suffix.lower() in {".txt", ".csv", ".tsv"}:
+        if path.stem in selected_ids and path.is_file() and path.suffix.lower() in {".txt", ".csv", ".tsv"}:
             candidates[path.stem].append(path)
     sources = {}
     for recording in recordings:
@@ -608,10 +610,15 @@ def run(cli):
     if output.exists() and any(output.iterdir()):
         raise ValueError("Choose a new/empty output directory")
     output.mkdir(parents=True, exist_ok=True)
+    write_csv(output / "selected_recordings.csv", [{**asdict(recording), "split": cli.split,
+                                                    "annotation_path": str(sources[recording.recording_id].resolve())}
+                                                   for recording in recordings])
     seeds = sorted({seed for seed, _ in pairs})
     metadata = {"status": "running", "created_at": datetime.now(timezone.utc).isoformat(),
                 "arguments": {k: str(v) if isinstance(v, Path) else v for k, v in vars(cli).items()},
                 "recordings": len(recordings), "generation_seeds": seeds, "partial_run": cli.max_recordings is not None,
+                "selected_recording_ids": [recording.recording_id for recording in recordings],
+                "recording_selection": "HDF5 split and speaker filters; require matching prediction exports and exact-ID annotations; other annotation files and export folders are ignored",
                 "analysis_mode": "paired_model_comparison" if comparison else "single_model_category_performance",
                 "models": list(models),
                 "categories": {"semantic": "deictic/iconic/metaphoric union, including simultaneous beat",

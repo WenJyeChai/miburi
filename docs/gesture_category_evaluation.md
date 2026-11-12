@@ -73,6 +73,17 @@ Missing recordings are not silently dropped. `--foremotion-dir` remains an alias
 for `--motion-dir`. The default split is test only. Use `full_beatx_fulllength` for the
 existing 23-speaker evaluation protocol. `--speakers` can further restrict it.
 
+The `sem/` directory can contain training, validation and test annotations
+together. The script first selects the requested split from the evaluation
+HDF5, then checks `<motion-dir>/<recording_id>/pred.npz` and `gt.npz`, and reads
+only `sem/<recording_id>.txt` (or a supported CSV/TSV with that exact stem).
+For example, `test_1000/2_scott_0_1_1/` uses `sem/2_scott_0_1_1.txt`.
+Other annotation files and extra output folders are ignored. The directory name
+`test_1000` is not itself used as evidence of a recording's split. Keep
+`--split test` and check `selected_recordings.csv` for the exact evaluated IDs;
+the same list is recorded in metadata. You do not need to remove training
+annotation files from `sem/`.
+
 The default metrics include geometry, FGD and beat alignment. For an initial
 geometry-only check, add `--metrics geometry --max-recordings 1` and use a new
 output directory. Such a partial run is marked in metadata. `--device cpu`
@@ -224,6 +235,7 @@ optional paired comparison.
 ## Outputs and verification
 
 - `report.md`: main system performance tables by category and FGD table.
+- `selected_recordings.csv`: exact evaluated recording IDs, verified split and annotation paths.
 - `category_metrics.csv`: per-category system scores with 95% confidence intervals.
 - `metrics_by_seed.csv` / `metrics_summary.csv`: dataset scores and seed means/std.
 - `per_recording_metrics.csv`: numerators and denominators for reproducibility.
