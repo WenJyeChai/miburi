@@ -187,6 +187,37 @@ class PastAsFutureTests(unittest.TestCase):
         differences = {key for key in configs[0] if configs[0][key] != configs[1][key]}
         self.assertLessEqual(differences, {"config", "project_name", "wandb_name", "regret_future_context", "name"})
 
+    def test_scott_controls_preserve_reference_training_recipe(self):
+        from scripts.trainers.utils import config
+        root = Path(__file__).resolve().parents[1]
+        controls = []
+        for context in ("matched", "past_as_future"):
+            path = root / "configs" / f"gtdm3_futurecontext_{context}_beatx_scott.yaml"
+            with patch.object(sys, "argv", ["check", "--config", str(path)]):
+                args = config.parse_args()
+            self.assertEqual(args.trainer, "UpperFaceLowerGTDM3FutureContextRegretRVQ")
+            self.assertEqual(args.regret_future_context, context)
+            self.assertEqual(args.dataset_ratio, "scott_beatx_lowervalid")
+            self.assertEqual(args.batch_size, 64)
+            self.assertEqual(args.lr_policy, "cosine_delay")
+            self.assertEqual(args.lr_cosine_start_epoch, 500)
+            self.assertEqual(args.lr_cosine_end_epoch, -1)
+            self.assertEqual(args.epochs, 10000)
+            self.assertEqual(args.face_loss_weight, 2.5)
+            self.assertEqual(args.regret_weight, 6)
+            self.assertEqual(args.regret_initial_weight, 0.6)
+            self.assertEqual(args.dense_future_gesture_weight, 0)
+            self.assertEqual(args.kinematic_rvq_sample_probability, 0.15)
+            self.assertEqual(args.kinematic_rvq_soft_target_weight, 0.5)
+            self.assertEqual(args.wandb_mode, "offline")
+            self.assertFalse(args.is_continue)
+            self.assertIn("demoexp_release_uppercodec", args.upperbodycodec_ckpt)
+            self.assertIn("demoexp_release_lowercodec", args.lowerbodycodec_ckpt)
+            self.assertIn("demoexp_release_facecodec", args.facecodec_ckpt)
+            controls.append(vars(args))
+        differences = {key for key in controls[0] if controls[0][key] != controls[1][key]}
+        self.assertLessEqual(differences, {"config", "project_name", "wandb_name", "wandb_tags", "regret_future_context", "name"})
+
 
 if __name__ == "__main__":
     torch.set_num_threads(1)

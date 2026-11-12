@@ -81,6 +81,86 @@ are otherwise identical.
 
 ## Run
 
+### Single-speaker Scott: reference 0807_2331
+
+The Scott configs were copied from the local saved experiment config matching
+`/home/wenjye/miburi/experiments/0807_2331_gtdm3_sharedregretrvq_global_scott_densefg_bf16_4_regret_6_weight_cosine/config.yaml`:
+
+- `configs/gtdm3_futurecontext_past_as_future_beatx_scott.yaml`
+- `configs/gtdm3_futurecontext_matched_beatx_scott.yaml`
+
+They preserve the saved reference's settings, including Scott lower-valid
+training clips, batch 64, seed 2342, demo-release codecs (upper 180 / lower 440 /
+face 100), face weight 2.5, cosine LR 1e-4 to 1e-6 starting at 500 and ending
+at 10000 (`lr_cosine_end_epoch: -1` resolves to the 10000-epoch budget), KL
+0.6 to 6 over one epoch, and stochastic RVQ 0.15 / 0.5. The original
+`dense_future_gesture_weight` is **0**, despite the experiment name. This
+remains zero. The saved `training_speakers` list is retained; the actual Scott
+selection is applied by `dataset_ratio: scott_beatx_lowervalid`.
+
+The intentional changes are the new sampled-context trainer, context mode,
+four sampled KL targets, and run names/offline W&B bookkeeping. Independent
+depth weights are explicit, matching the original trainer default. Old runtime
+`config`, `name` and `test_ckpt` fields are omitted to avoid pointing the new
+run at the old experiment's config/output/checkpoint. These are fresh training
+runs, not continuation or fine-tuning of the old checkpoint. Use the new
+matched Scott control when attributing differences to future content: the old
+reference used dense KL, while this experiment samples eligible positions.
+
+Past-as-future:
+
+```bash
+CUDA_VISIBLE_DEVICES=2 \
+HF_HUB_OFFLINE=1 \
+NO_TORCH_COMPILE=1 \
+OMP_NUM_THREADS=4 \
+python scripts/train.py \
+  --config configs/gtdm3_futurecontext_past_as_future_beatx_scott.yaml \
+  --batch_size 64 \
+  --loader_workers 8 \
+  --pretrain_warmup_epochs 0 \
+  --regret_future_context past_as_future \
+  --regret_context_targets 4 \
+  --regret_start_epoch 0 \
+  --regret_ramp_epochs 1 \
+  --regret_weight 6 \
+  --regret_initial_weight 0.6 \
+  --kinematic_rvq_start_epoch 0 \
+  --kinematic_rvq_ramp_epochs 1 \
+  --dense_future_gesture_weight 0 \
+  --face_loss_weight 2.5 \
+  --epochs 10000 \
+  --test_period 20 \
+  --lr_policy cosine_delay \
+  --lr_base 1e-4 \
+  --lr_min 1e-6 \
+  --lr_cosine_start_epoch 500 \
+  --lr_cosine_end_epoch -1 \
+  --wandb True \
+  --wandb_mode offline \
+  --wandb_project miburi_single \
+  --wandb_group scott-future-content-control-cosine500 \
+  --wandb_name scott-past-as-future-bs64-w6-cosine500 \
+  --wandb_tags scott globalregret past-as-future sampled-kl rvq cosine500 bs64
+```
+
+For the paired matched run, use the same command with the matched config,
+`--regret_future_context matched`, a distinct W&B name, and matched-future tags.
+The config files contain all settings, so the minimal equivalent is:
+
+```bash
+CUDA_VISIBLE_DEVICES=2 \
+HF_HUB_OFFLINE=1 \
+NO_TORCH_COMPILE=1 \
+OMP_NUM_THREADS=4 \
+python scripts/train.py \
+  --config configs/gtdm3_futurecontext_matched_beatx_scott.yaml \
+  --wandb True \
+  --wandb_mode offline
+```
+
+### Multispeaker variant
+
 Copy the new model helper, trainer and configs, plus updated
 `scripts/trainers/__init__.py` and `scripts/trainers/utils/config.py`, to the
 same paths on the Linux/CUDA training host. Run from the repository root.
